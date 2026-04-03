@@ -1,8 +1,9 @@
 /**
- * /pages/api/games.js
- * 1) Busca scoreboard de todas as ligas para encontrar jogos ao vivo
- * 2) Para cada jogo ao vivo, busca o endpoint /summary para obter stats reais
- * Clock ESPN é PROGRESSIVO: rawClock = segundos jogados
+ * /pages/api/games.js — ESPN API com stats corretas do summary endpoint
+ * Nomes reais das stats ESPN (descobertos via debug):
+ *   wonCorners, possessionPct, totalShots, shotsOnTarget,
+ *   foulsCommitted, yellowCards, redCards, saves, offsides,
+ *   blockedShots, totalPasses, accuratePasses, totalCrosses
  */
 
 const LEAGUES = [
@@ -71,95 +72,72 @@ const HEADERS = {
 function isLive(e) {
   const state = (e?.status?.type?.state || "").toLowerCase();
   const name  = (e?.status?.type?.name  || "").toLowerCase();
-  return state === "in" || state === "halftime" || name.includes("inprogress") || name.includes("halftime");
+  return state === "in" || state === "halftime" ||
+         name.includes("inprogress") || name.includes("halftime");
 }
 
 function isUpcoming(e) {
   return (e?.status?.type?.state || "").toLowerCase() === "pre";
 }
 
-// Clock ESPN é PROGRESSIVO (segundos jogados)
+// Clock ESPN é PROGRESSIVO (rawClock = segundos jogados no período atual)
 function extractMinute(event) {
+  const display  = event.status?.displayClock || "";
   const rawClock = event.status?.clock ?? 0;
   const period   = event.status?.period || 1;
-  const display  = event.status?.displayClock || "";
 
-  // displayClock formato "8'" ou "45+2'" → usa direto
-  const m = display.match(/^(\d+)/);
-  if (m) {
-    const base = parseInt(m[1], 10);
-    // Detecta acréscimos: "45+2'"
-    const extra = display.match(/\+(\d+)/);
-    return base + (extra ? parseInt(extra[1], 10) : 0);
-  }
-  // Fallback: rawClock = segundos jogados no período atual
-  if (rawClock > 0) {
-    return period === 1
-      ? Math.round(rawClock / 60)
-      : 45 + Math.round(rawClock / 60);
-  }
+  // displayClock = "27'" ou "45+2'" → usa direto
+  const base  = display.match(/^(\d+)/)?.[1];
+  const extra = display.match(/\+(\d+)/)?.[1];
+  if (base) return parseInt(base) + (extra ? parseInt(extra) : 0);
+
+  // Fallback: rawClock em segundos jogados
+  if (rawClock > 0) return period === 1
+    ? Math.round(rawClock / 60)
+    : 45 + Math.round(rawClock / 60);
+
   return period === 2 ? 55 : 25;
 }
 
-// ── Busca summary de um jogo para obter stats detalhadas ────────────────────
-async function fetchGameSummary(leagueId, eventId) {
-  try {
-    const url = `${ESPN_BASE}/${leagueId}/summary?event=${eventId}`;
-    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(6000) });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
+// ── Extrai stats do boxscore.teams[] usando homeAway como chave ──────────────
+// Nomes REAIS das stats ESPN (verificados via debug):
+// wonCorners, possessionPct, totalShots, shotsOnTarget,
+// foulsCommitted, yellowCards, redCards, saves, offsides, blockedShots
+// dangerousAttacks (nem sempre presente), totalCrosses, totalPasses
+function parseSummaryStats(summary) {
+  const teams = summary?.boxscore?.teams || [];
+  const result = { home: {}, away: {} };
 
-// ── Extrai stats do boxscore do summary ─────────────────────────────────────
-function extractSummaryStats(summary, homeTeamId, awayTeamId) {
-  if (!summary?.boxscore) return {};
-
-  const teams = summary.boxscore.teams || [];
-  const r = {};
-
-  // ESPN summary boxscore.teams = [{team: {id}, statistics: [{name, displayValue, ...}]}]
   for (const teamData of teams) {
-    const tid  = teamData.team?.id;
-    const isH  = tid === homeTeamId;
-    const isA  = tid === awayTeamId;
-    if (!isH && !isA) continue;
-
-    const side = isH ? "home" : "away";
-    for (const stat of (teamData.statistics || [])) {
-      const name = (stat.name || stat.label || "").toLowerCase().trim();
-      const val  = parseFloat(stat.displayValue ?? stat.value ?? stat.abbreviation ?? 0);
+    const side = teamData.homeAway === "home" ? "home" : "away";
+    for (const s of (teamData.statistics || [])) {
+      const key = s.name || "";
+      const val = parseFloat(s.displayValue ?? s.value ?? "0");
       if (isNaN(val)) continue;
-
-      switch (name) {
-        case "possessionpct":
-        case "possession":         r[`possession_${side}`]        = val; break;
-        case "shotstotal":
-        case "shots":              r[`shots_${side}`]             = val; break;
-        case "shotsongoal":
-        case "shotsontarget":      r[`onTarget_${side}`]          = val; break;
-        case "cornerkicks":
-        case "corners":            r[`corners_${side}`]           = val; break;
-        case "foulscommitted":
-        case "fouls":              r[`fouls_${side}`]             = val; break;
-        case "yellowcards":        r[`yellow_${side}`]            = val; break;
-        case "redcards":           r[`red_${side}`]               = val; break;
-        case "offsides":           r[`offsides_${side}`]          = val; break;
-        case "dangerousattacks":   r[`dangerousAttacks_${side}`]  = val; break;
-        case "blockedshots":       r[`blockedShots_${side}`]      = val; break;
-        case "saves":              r[`saves_${side}`]             = val; break;
-        case "totalshots":         r[`shots_${side}`]             = val; break;
-        case "shotsongoalpct":     break; // skip percentages
-        default:                   break;
-      }
+      result[side][key] = val;
     }
   }
-  return r;
+  return result;
 }
 
-// ── Busca scoreboard de uma liga ────────────────────────────────────────────
+function getStat(parsed, side, ...keys) {
+  for (const k of keys) {
+    if (parsed[side][k] !== undefined) return parsed[side][k];
+  }
+  return undefined;
+}
+
+async function fetchGameSummary(leagueId, eventId) {
+  try {
+    const res = await fetch(
+      `${ESPN_BASE}/${leagueId}/summary?event=${eventId}`,
+      { headers: HEADERS, signal: AbortSignal.timeout(7000) }
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
 async function fetchLeague(league) {
   try {
     const res = await fetch(`${ESPN_BASE}/${league.id}/scoreboard`, {
@@ -173,15 +151,12 @@ async function fetchLeague(league) {
     return {
       league,
       live:     events.filter(isLive),
-      upcoming: events.filter(isUpcoming).map(e => normalizeGame(e, league, {}, true)),
+      upcoming: events.filter(isUpcoming).map(e => normalizeGame(e, league, {home:{}, away:{}}, true)),
     };
-  } catch {
-    return { league, live: [], upcoming: [] };
-  }
+  } catch { return { league, live: [], upcoming: [] }; }
 }
 
-// ── Normaliza um evento + stats em formato padrão ───────────────────────────
-function normalizeGame(event, league, stats, isUpcomingGame) {
+function normalizeGame(event, league, parsed, isUpcomingGame) {
   const comp        = event.competitions?.[0] || {};
   const competitors = comp.competitors || [];
   const home        = competitors.find(c => c.homeAway === "home") || {};
@@ -189,13 +164,41 @@ function normalizeGame(event, league, stats, isUpcomingGame) {
   const minute      = isUpcomingGame ? 0 : extractMinute(event);
   const period      = event.status?.period || 1;
 
-  // Posse: garante que soma 100
-  let posH = stats.possession_home ?? 50;
-  let posA = stats.possession_away ?? (100 - posH);
+  // Posse
+  const posH = getStat(parsed, "home", "possessionPct", "possession") ?? 50;
+  const posA = getStat(parsed, "away", "possessionPct", "possession") ?? (100 - posH);
 
-  // Ataques perigosos: estima se não disponível
-  const daH = stats.dangerousAttacks_home ?? estimateDA(stats.shots_home ?? 0, posH);
-  const daA = stats.dangerousAttacks_away ?? estimateDA(stats.shots_away ?? 0, posA);
+  // Chutes
+  const shotsH    = getStat(parsed, "home", "totalShots", "shots") ?? 0;
+  const shotsA    = getStat(parsed, "away", "totalShots", "shots") ?? 0;
+  const onTgtH    = getStat(parsed, "home", "shotsOnTarget", "shotsOnGoal") ?? 0;
+  const onTgtA    = getStat(parsed, "away", "shotsOnTarget", "shotsOnGoal") ?? 0;
+
+  // Escanteios — ESPN usa "wonCorners" no summary
+  const cornH     = getStat(parsed, "home", "wonCorners", "cornerKicks", "corners") ?? 0;
+  const cornA     = getStat(parsed, "away", "wonCorners", "cornerKicks", "corners") ?? 0;
+
+  // Ataques perigosos (nem sempre presente → estima)
+  const daH = getStat(parsed, "home", "dangerousAttacks") ?? estimateDA(shotsH, posH);
+  const daA = getStat(parsed, "away", "dangerousAttacks") ?? estimateDA(shotsA, posA);
+
+  // Extras
+  const foulsH    = getStat(parsed, "home", "foulsCommitted", "fouls") ?? 0;
+  const foulsA    = getStat(parsed, "away", "foulsCommitted", "fouls") ?? 0;
+  const yellowH   = getStat(parsed, "home", "yellowCards") ?? 0;
+  const yellowA   = getStat(parsed, "away", "yellowCards") ?? 0;
+  const savesH    = getStat(parsed, "home", "saves") ?? 0;
+  const savesA    = getStat(parsed, "away", "saves") ?? 0;
+  const offH      = getStat(parsed, "home", "offsides") ?? 0;
+  const offA      = getStat(parsed, "away", "offsides") ?? 0;
+  const crossH    = getStat(parsed, "home", "totalCrosses") ?? 0;
+  const crossA    = getStat(parsed, "away", "totalCrosses") ?? 0;
+  const passH     = getStat(parsed, "home", "totalPasses") ?? 0;
+  const passA     = getStat(parsed, "away", "totalPasses") ?? 0;
+  const accPassH  = getStat(parsed, "home", "accuratePasses") ?? 0;
+  const accPassA  = getStat(parsed, "away", "accuratePasses") ?? 0;
+  const longH     = getStat(parsed, "home", "totalLongBalls") ?? 0;
+  const longA     = getStat(parsed, "away", "totalLongBalls") ?? 0;
 
   return {
     id:            event.id,
@@ -204,10 +207,8 @@ function normalizeGame(event, league, stats, isUpcomingGame) {
     leagueId:      league.id,
     home:          home.team?.displayName || home.team?.shortDisplayName || "Home",
     homeShort:     home.team?.abbreviation || "HME",
-    homeId:        home.team?.id,
-    away:          away.team?.displayName || away.team?.shortDisplayName || "Away",
+    away:          away.team?.displayName  || away.team?.shortDisplayName  || "Away",
     awayShort:     away.team?.abbreviation || "AWY",
-    awayId:        away.team?.id,
     score:         { home: parseInt(home.score) || 0, away: parseInt(away.score) || 0 },
     minute, period,
     clock:         event.status?.displayClock || "",
@@ -215,16 +216,21 @@ function normalizeGame(event, league, stats, isUpcomingGame) {
     statusDetail:  event.status?.type?.description || "",
     isUpcoming:    !!isUpcomingGame,
     isDemo:        false,
-    // Stats
-    possession:       { home: posH,                    away: posA                    },
-    shots:            { home: stats.shots_home    ?? 0, away: stats.shots_away    ?? 0 },
-    onTarget:         { home: stats.onTarget_home ?? 0, away: stats.onTarget_away ?? 0 },
-    corners:          { home: stats.corners_home  ?? 0, away: stats.corners_away  ?? 0 },
-    fouls:            { home: stats.fouls_home    ?? 0, away: stats.fouls_away    ?? 0 },
-    yellowCards:      { home: stats.yellow_home   ?? 0, away: stats.yellow_away   ?? 0 },
-    dangerousAttacks: { home: daH,                      away: daA                     },
-    saves:            { home: stats.saves_home    ?? 0, away: stats.saves_away    ?? 0 },
-    offsides:         { home: stats.offsides_home ?? 0, away: stats.offsides_away ?? 0 },
+    // Stats principais
+    possession:       { home: posH,   away: posA   },
+    shots:            { home: shotsH, away: shotsA },
+    onTarget:         { home: onTgtH, away: onTgtA },
+    corners:          { home: cornH,  away: cornA  },
+    fouls:            { home: foulsH, away: foulsA },
+    yellowCards:      { home: yellowH,away: yellowA},
+    dangerousAttacks: { home: daH,    away: daA    },
+    saves:            { home: savesH, away: savesA },
+    offsides:         { home: offH,   away: offA   },
+    // Stats extras (para algoritmo e exibição)
+    crosses:          { home: crossH, away: crossA },
+    passes:           { home: passH,  away: passA  },
+    accuratePasses:   { home: accPassH, away: accPassA },
+    longBalls:        { home: longH,  away: longA  },
     pressureIndex:    null,
     venue:            comp.venue?.fullName || null,
   };
@@ -234,14 +240,13 @@ function estimateDA(shots, possession) {
   return Math.round(shots * 3.2 + (possession / 100) * 16);
 }
 
-// ── Handler principal ────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).end();
 
-  // FASE 1: Busca scoreboards de todas as ligas em paralelo
+  // FASE 1 — Scoreboards de todas as ligas em paralelo
   const leagueResults = await Promise.allSettled(LEAGUES.map(fetchLeague));
 
-  const liveRaw    = []; // { event, league }
+  const liveRaw       = [];
   const upcomingGames = [];
 
   for (const r of leagueResults) {
@@ -251,21 +256,15 @@ export default async function handler(req, res) {
     for (const g of upcoming) upcomingGames.push(g);
   }
 
-  // FASE 2: Busca summary de cada jogo ao vivo para obter stats reais
-  // Limita a 25 simultâneos para não sobrecarregar
+  // FASE 2 — Summary de cada jogo ao vivo (stats reais)
   const liveGames = await Promise.all(
     liveRaw.map(async ({ event, league }) => {
       const summary = await fetchGameSummary(league.id, event.id);
-      const comp    = event.competitions?.[0] || {};
-      const comps   = comp.competitors || [];
-      const homeId  = comps.find(c => c.homeAway === "home")?.team?.id;
-      const awayId  = comps.find(c => c.homeAway === "away")?.team?.id;
-      const stats   = summary ? extractSummaryStats(summary, homeId, awayId) : {};
-      return normalizeGame(event, league, stats, false);
+      const parsed  = parseSummaryStats(summary);
+      return normalizeGame(event, league, parsed, false);
     })
   );
 
-  // Ordena upcoming por horário
   upcomingGames.sort((a, b) =>
     a.startTime && b.startTime ? new Date(a.startTime) - new Date(b.startTime) : 0
   );

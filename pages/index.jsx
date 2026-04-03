@@ -390,17 +390,21 @@ export default function Home() {
                     <StatBar label="Ataques Perigosos" homeVal={selected.dangerousAttacks.home} awayVal={selected.dangerousAttacks.away}/>
                     <StatBar label="Chutes no Alvo" homeVal={selected.onTarget.home} awayVal={selected.onTarget.away}/>
                     <StatBar label="Total Chutes" homeVal={selected.shots.home} awayVal={selected.shots.away}/>
-                    <StatBar label="Escanteios" homeVal={selected.corners.home} awayVal={selected.corners.away}/>
+                    <StatBar label="Escanteios ⭐" homeVal={selected.corners.home} awayVal={selected.corners.away}/>
                     <StatBar label="Faltas" homeVal={selected.fouls?.home} awayVal={selected.fouls?.away}/>
-                    <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10, marginTop:14 }}>
+                    <StatBar label="Cruzamentos" homeVal={selected.crosses?.home} awayVal={selected.crosses?.away}/>
+                    <StatBar label="Passes" homeVal={selected.passes?.home} awayVal={selected.passes?.away}/>
+                    <StatBar label="Impedimentos" homeVal={selected.offsides?.home} awayVal={selected.offsides?.away}/>
+                    <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginTop:14 }}>
                       {[
                         { label:"MINUTO", value:`${selected.minute}'`, color: selected.minute >= 75 ? "#ff4560" : "#c9d6e3" },
-                        { label:"ESCANTEIOS", value: selected.corners.home + selected.corners.away, color:"#f0c040" },
-                        { label:"PERÍODO", value: selected.period === 2 ? "2ºTEMPO" : "1ºTEMPO", color:"#00e5a0" },
+                        { label:"ESCANTEIOS", value:`${selected.corners.home}–${selected.corners.away}`, color:"#00e5a0" },
+                        { label:"CARTÕES", value:`${(selected.yellowCards?.home??0)+(selected.yellowCards?.away??0)}🟨`, color:"#f0c040" },
+                        { label:"PERÍODO", value: selected.period === 2 ? "2ºT" : "1ºT", color:"#00e5a0" },
                       ].map((s,i) => (
-                        <div key={i} style={{ background:"#0a0f18", borderRadius:8, padding:"10px 12px", border:"1px solid #1c2333" }}>
+                        <div key={i} style={{ background:"#0a0f18", borderRadius:8, padding:"10px 10px", border:"1px solid #1c2333" }}>
                           <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", letterSpacing:1, marginBottom:4 }}>{s.label}</div>
-                          <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:20, color:s.color }}>{s.value}</div>
+                          <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:18, color:s.color }}>{s.value}</div>
                         </div>
                       ))}
                     </div>
