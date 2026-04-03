@@ -2,9 +2,11 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import Head from "next/head";
 import { projectCorners, generateDemoGame } from "../lib/predictor";
 
-const ALERT_THRESHOLD = 85;
+const ALERT_THRESHOLD = 70;
+const RED_THRESHOLD = 80;
+const confColor = (c) => c >= RED_THRESHOLD ? "#ff4560" : c >= ALERT_THRESHOLD ? "#00e5a0" : c >= 50 ? "#f0c040" : "#3d4f6b";
 
-const sigColor = s => s === "STRONG" ? "#00e5a0" : s === "MODERATE" ? "#f0c040" : "#3d4f6b";
+const sigColor = s => s === "STRONG" ? "#ff4560" : s === "MODERATE" ? "#f0c040" : "#3d4f6b";
 const impactColor = i => i === "high" ? "#00e5a0" : i === "medium" ? "#f0c040" : "#4a6070";
 
 function StatBar({ label, homeVal, awayVal, highlight }) {
@@ -94,18 +96,19 @@ function GameCard({ game, onSelect, isSelected }) {
   }
 
   const pred = projectCorners(game);
-  const isStrong = pred.confidence >= ALERT_THRESHOLD;
-  // Verde APENAS se ≥ 85%, amarelo se ≥ 65%, cinza abaixo
-  const sc = isStrong ? "#00e5a0" : pred.signal === "MODERATE" ? "#f0c040" : "#2a3a50";
-  const borderColor = isSelected ? "#00e5a0" : sc;
+  const conf = pred.confidence;
+  const isRed   = conf >= RED_THRESHOLD;    // 80%+ vermelho
+  const isGreen = conf >= ALERT_THRESHOLD;  // 70-79% verde
+  const sc = confColor(conf);
+  const borderColor = isSelected ? sc : sc;
 
   return (
     <div onClick={() => onSelect(game)} style={{
       background: isSelected ? "#0d1a2e" : "#0d1117",
-      border:`1px solid ${isSelected ? "#00e5a0" : "#1c2333"}`,
-      borderLeft:`3px solid ${borderColor}`,
+      border:`1px solid ${isSelected ? sc : "#1c2333"}`,
+      borderLeft:`3px solid ${sc}`,
       borderRadius:8, padding:"11px 14px", cursor:"pointer", marginBottom:7, transition:"all .2s",
-      boxShadow: isStrong ? `0 0 14px ${sc}30` : "none",
+      boxShadow: isRed ? `0 0 16px ${sc}45` : isGreen ? `0 0 10px ${sc}25` : "none",
     }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:5 }}>
         <div style={{ flex:1, minWidth:0 }}>
@@ -132,11 +135,11 @@ function GameCard({ game, onSelect, isSelected }) {
           <span style={{ fontFamily:"var(--mono)", fontSize:9, color:"#4a6070" }}>~{pred.projected10}/10m</span>
           <span style={{
             fontFamily:"var(--display)", fontWeight:700, fontSize:10, letterSpacing:1,
-            color: isStrong ? "#080b10" : sc,
-            background: isStrong ? "#00e5a0" : `${sc}22`,
+            color: (isRed || isGreen) ? "#080b10" : sc,
+            background: sc,
             padding:"2px 7px", borderRadius:4,
           }}>
-            {isStrong ? `✓ ${pred.confidence}%` : `${pred.confidence}%`}
+            {isRed ? `🔴 ${conf}%` : isGreen ? `✓ ${conf}%` : `${conf}%`}
           </span>
         </div>
       </div>
@@ -162,7 +165,7 @@ function AlertBanner({ alerts, onDismiss }) {
             <span style={{ color:"#f0c040" }}>{a.minute}'</span>
             <span style={{ color:"#3d4f6b" }}>·</span>
             <span style={{ color:"#c9d6e3" }}>{a.market}</span>
-            <span style={{ background:"#00e5a0", color:"#080b10", padding:"1px 5px", borderRadius:3, fontSize:8, fontWeight:700 }}>{a.confidence}%</span>
+            <span style={{ background: a.confidence >= RED_THRESHOLD ? "#ff4560" : "#00e5a0", color:"#080b10", padding:"1px 5px", borderRadius:3, fontSize:8, fontWeight:700 }}>{a.confidence}%</span>
           </div>
         ))}
       </div>
@@ -267,8 +270,10 @@ export default function Home() {
   );
 
   const pred = prediction;
-  const sc   = pred ? sigColor(pred.signal) : "#3d4f6b";
-  const isStrong = pred?.confidence >= ALERT_THRESHOLD;
+  const isRed   = (pred?.confidence ?? 0) >= RED_THRESHOLD;
+  const isGreen = (pred?.confidence ?? 0) >= ALERT_THRESHOLD;
+  const isStrong = isRed || isGreen;
+  const sc   = pred ? confColor(pred.confidence) : "#3d4f6b";
 
   return (
     <>
@@ -293,7 +298,8 @@ export default function Home() {
             {[
               { label:"AO VIVO",  value: isDemo ? 0 : games.length,    color:"#00e5a0" },
               { label:"PRÓXIMOS", value: upcoming.length,              color:"#f0c040" },
-              { label:"≥85%",     value: games.filter(g => projectCorners(g).confidence >= ALERT_THRESHOLD).length, color:"#00e5a0" },
+              { label:"≥80% 🔴", value: games.filter(g => !g.isUpcoming && projectCorners(g).confidence >= RED_THRESHOLD).length, color:"#ff4560" },
+              { label:"70-79% ✓", value: games.filter(g => !g.isUpcoming && projectCorners(g).confidence >= ALERT_THRESHOLD && projectCorners(g).confidence < RED_THRESHOLD).length, color:"#00e5a0" },
             ].map((s,i) => (
               <div key={i} style={{ textAlign:"right" }}>
                 <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b" }}>{s.label}</div>
