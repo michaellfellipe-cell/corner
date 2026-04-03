@@ -1,23 +1,26 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Head from "next/head";
-import { predictCorners, generateDemoGame } from "../lib/predictor";
+import { projectCorners, generateDemoGame } from "../lib/predictor";
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
 const sigColor = s => s === "STRONG" ? "#00e5a0" : s === "MODERATE" ? "#f0c040" : "#3d4f6b";
+const impactColor = i => i === "high" ? "#00e5a0" : i === "medium" ? "#f0c040" : "#5a7090";
 
-function StatBar({ label, homeVal, awayVal }) {
+function StatBar({ label, homeVal, awayVal, highlight }) {
   const hv = homeVal ?? 0, av = awayVal ?? 0;
   const total = hv + av;
   const pct = total > 0 ? (hv / total) * 100 : 50;
+  const bc = highlight ? "#00e5a044" : "transparent";
   return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ display:"flex", justifyContent:"space-between", fontSize:11, fontFamily:"var(--mono)", marginBottom:4 }}>
-        <span style={{ color:"#00e5a0", minWidth:28 }}>{homeVal ?? "—"}</span>
-        <span style={{ color:"#3d4f6b", fontSize:10, textTransform:"uppercase", letterSpacing:1 }}>{label}</span>
-        <span style={{ color:"#f0c040", minWidth:28, textAlign:"right" }}>{awayVal ?? "—"}</span>
+    <div style={{ marginBottom: 9, background: bc, borderRadius: 4, padding: highlight ? "2px 4px" : 0 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", fontSize:10, fontFamily:"var(--mono)", marginBottom:3 }}>
+        <span style={{ color: highlight ? "#00e5a0" : "#c9d6e3", minWidth:28, fontWeight: highlight ? 700 : 400 }}>{homeVal ?? "—"}</span>
+        <span style={{ color: highlight ? "#c9d6e3" : "#3d4f6b", fontSize:9, textTransform:"uppercase", letterSpacing:1 }}>{label}</span>
+        <span style={{ color: highlight ? "#f0c040" : "#c9d6e3", minWidth:28, textAlign:"right", fontWeight: highlight ? 700 : 400 }}>{awayVal ?? "—"}</span>
       </div>
-      <div style={{ height:5, background:"#1a2235", borderRadius:3, overflow:"hidden", display:"flex" }}>
-        <div style={{ width:`${pct}%`, background:"#00e5a0", borderRadius:"3px 0 0 3px", transition:"width .8s" }}/>
-        <div style={{ flex:1, background:"#f0c040", borderRadius:"0 3px 3px 0" }}/>
+      <div style={{ height:4, background:"#1a2235", borderRadius:3, overflow:"hidden", display:"flex" }}>
+        <div style={{ width:`${pct}%`, background: highlight ? "#00e5a0" : "#2a4060", borderRadius:"3px 0 0 3px", transition:"width .8s" }}/>
+        <div style={{ flex:1, background: highlight ? "#f0c040" : "#2a4060", borderRadius:"0 3px 3px 0" }}/>
       </div>
     </div>
   );
@@ -25,19 +28,19 @@ function StatBar({ label, homeVal, awayVal }) {
 
 function Ring({ value, signal }) {
   const color = sigColor(signal);
-  const r = 40, c = 2 * Math.PI * r;
+  const r = 44, c = 2 * Math.PI * r;
   const off = c - (value / 100) * c;
   return (
-    <div style={{ position:"relative", width:100, height:100, margin:"0 auto" }}>
-      <svg width="100" height="100" style={{ transform:"rotate(-90deg)" }}>
-        <circle cx="50" cy="50" r={r} fill="none" stroke="#1a2235" strokeWidth="8"/>
-        <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="8"
+    <div style={{ position:"relative", width:108, height:108, margin:"0 auto" }}>
+      <svg width="108" height="108" style={{ transform:"rotate(-90deg)" }}>
+        <circle cx="54" cy="54" r={r} fill="none" stroke="#1a2235" strokeWidth="9"/>
+        <circle cx="54" cy="54" r={r} fill="none" stroke={color} strokeWidth="9"
           strokeDasharray={c} strokeDashoffset={off}
-          style={{ transition:"stroke-dashoffset 1s ease", filter:`drop-shadow(0 0 6px ${color})` }}/>
+          style={{ transition:"stroke-dashoffset 1.2s ease", filter:`drop-shadow(0 0 8px ${color})` }}/>
       </svg>
       <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center" }}>
-        <span style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:28, color, lineHeight:1 }}>{value}</span>
-        <span style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b" }}>CONF%</span>
+        <span style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:30, color, lineHeight:1 }}>{value}</span>
+        <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:1 }}>CONF%</span>
       </div>
     </div>
   );
@@ -49,24 +52,42 @@ function Dot() {
 
 function formatKickoff(isoDate) {
   if (!isoDate) return "—";
-  const d = new Date(isoDate);
-  return d.toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit", timeZone:"America/Sao_Paulo" });
+  return new Date(isoDate).toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit", timeZone:"America/Sao_Paulo" });
 }
 
+// ── Projection Bar ────────────────────────────────────────────────────────────
+function ProjectionBar({ value, max = 4 }) {
+  const pct = Math.min(100, (value / max) * 100);
+  const color = value >= 2.5 ? "#00e5a0" : value >= 1.5 ? "#f0c040" : "#5a7090";
+  return (
+    <div>
+      <div style={{ display:"flex", justifyContent:"space-between", fontFamily:"var(--mono)", fontSize:10, marginBottom:4 }}>
+        <span style={{ color:"#3d4f6b" }}>0</span>
+        <span style={{ color, fontWeight:700, fontSize:16 }}>{value.toFixed(1)}</span>
+        <span style={{ color:"#3d4f6b" }}>4+</span>
+      </div>
+      <div style={{ height:10, background:"#1a2235", borderRadius:5, overflow:"hidden", position:"relative" }}>
+        <div style={{ position:"absolute", left:"37.5%", top:0, bottom:0, width:1, background:"#2a4060" }}/>
+        <div style={{ position:"absolute", left:"62.5%", top:0, bottom:0, width:1, background:"#2a4060" }}/>
+        <div style={{ width:`${pct}%`, height:"100%", background:`linear-gradient(90deg, #1a4060, ${color})`, borderRadius:5, transition:"width 1.2s ease", boxShadow:`0 0 10px ${color}66` }}/>
+      </div>
+      <div style={{ display:"flex", justifyContent:"space-around", fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", marginTop:3 }}>
+        <span>1.5</span><span>2.5</span>
+      </div>
+    </div>
+  );
+}
+
+// ── GameCard ──────────────────────────────────────────────────────────────────
 function GameCard({ game, onSelect, isSelected }) {
-  const pred = game.isUpcoming ? null : predictCorners(game);
+  const pred = game.isUpcoming ? null : projectCorners(game);
   const sc = pred ? sigColor(pred.signal) : "#3d4f6b";
   return (
     <div onClick={() => onSelect(game)}
-      style={{
-        background: isSelected ? "#0d1a2e" : "#0d1117",
-        border: `1px solid ${isSelected ? "#00e5a0" : "#1c2333"}`,
-        borderLeft: `3px solid ${sc}`,
-        borderRadius:8, padding:"12px 14px", cursor:"pointer",
-        marginBottom:7, transition:"all .2s",
-        opacity: game.isUpcoming ? 0.7 : 1,
-        boxShadow: pred?.signal === "STRONG" ? `0 0 14px ${sc}30` : "none",
-      }}>
+      style={{ background: isSelected ? "#0d1a2e" : "#0d1117", border:`1px solid ${isSelected ? "#00e5a0" : "#1c2333"}`,
+        borderLeft:`3px solid ${sc}`, borderRadius:8, padding:"11px 14px", cursor:"pointer",
+        marginBottom:7, transition:"all .2s", opacity: game.isUpcoming ? 0.65 : 1,
+        boxShadow: pred?.signal === "STRONG" ? `0 0 16px ${sc}35` : "none" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:5 }}>
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:13, color:"#c9d6e3", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
@@ -74,39 +95,66 @@ function GameCard({ game, onSelect, isSelected }) {
           </div>
           <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", marginTop:1 }}>
             {game.leagueCountry} {game.league}
-            {game.isDemo && <span style={{ color:"#f0c040", marginLeft:6 }}>[DEMO]</span>}
+            {game.isDemo && <span style={{ color:"#f0c040", marginLeft:5 }}>[DEMO]</span>}
           </div>
         </div>
         <div style={{ textAlign:"right", flexShrink:0, marginLeft:8 }}>
           {game.isUpcoming ? (
             <div style={{ fontFamily:"var(--mono)", fontSize:11, color:"#f0c040" }}>{formatKickoff(game.startTime)}</div>
           ) : (
-            <>
-              <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:19, color:"#c9d6e3", lineHeight:1 }}>
-                {game.score.home}–{game.score.away}
-              </div>
-              <div style={{ display:"flex", gap:4, alignItems:"center", justifyContent:"flex-end", marginTop:2 }}>
-                <Dot/><span style={{ fontFamily:"var(--mono)", fontSize:9, color:"#00e5a0" }}>{game.minute}'</span>
-              </div>
-            </>
+            <><div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:19, color:"#c9d6e3", lineHeight:1 }}>{game.score.home}–{game.score.away}</div>
+            <div style={{ display:"flex", gap:4, alignItems:"center", justifyContent:"flex-end", marginTop:2 }}>
+              <Dot/><span style={{ fontFamily:"var(--mono)", fontSize:9, color:"#00e5a0" }}>{game.minute}'</span>
+            </div></>
           )}
         </div>
       </div>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <span style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b" }}>
-          {game.isUpcoming ? "🕐 AGENDADO" : `ESC ${game.corners.home}–${game.corners.away}`}
+          {game.isUpcoming ? "🕐 AGENDADO" : `ESC ${game.corners?.home ?? 0}–${game.corners?.away ?? 0} · CRZ ${(game.crosses?.home ?? 0)+(game.crosses?.away ?? 0)}`}
         </span>
         {pred && (
-          <span style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:10, letterSpacing:1, color:sc, background:`${sc}18`, padding:"2px 7px", borderRadius:4 }}>
-            {pred.signal} · {pred.confidence}%
-          </span>
+          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
+            <span style={{ fontFamily:"var(--mono)", fontSize:9, color:"#5a7090" }}>~{pred.projected10}/10min</span>
+            <span style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:10, letterSpacing:1, color:sc, background:`${sc}18`, padding:"2px 7px", borderRadius:4 }}>
+              {pred.signal} {pred.confidence}%
+            </span>
+          </div>
         )}
       </div>
     </div>
   );
 }
 
-// ─── Main ────────────────────────────────────────────────────────────────────
+// ── Alert Banner ──────────────────────────────────────────────────────────────
+function AlertBanner({ alerts }) {
+  const [visible, setVisible] = useState(true);
+  if (!alerts.length || !visible) return null;
+  return (
+    <div style={{ background:"linear-gradient(90deg,#061a0f,#0a2018)", borderBottom:"1px solid #00e5a055", padding:"0 16px", display:"flex", alignItems:"stretch", gap:0, overflowX:"auto", minHeight:44 }}>
+      <div style={{ flexShrink:0, display:"flex", alignItems:"center", paddingRight:12, borderRight:"1px solid #00e5a033", marginRight:12 }}>
+        <span style={{ fontFamily:"var(--mono)", fontSize:9, color:"#00e5a0", letterSpacing:2, animation:"pulse 2s infinite" }}>🔔 ALERTAS</span>
+      </div>
+      <div style={{ display:"flex", gap:8, alignItems:"center", overflowX:"auto", flex:1 }}>
+        {alerts.map(a => (
+          <div key={a.id} style={{ flexShrink:0, display:"flex", alignItems:"center", gap:8, fontFamily:"var(--mono)", fontSize:10,
+            background:"#00e5a00d", padding:"6px 12px", borderRadius:6, border:"1px solid #00e5a033", cursor:"pointer" }}
+            onClick={a.onClick}>
+            <span style={{ color:"#00e5a0", fontWeight:700 }}>{a.game}</span>
+            <span style={{ color:"#3d4f6b" }}>·</span>
+            <span style={{ color:"#f0c040" }}>{a.minute}'</span>
+            <span style={{ color:"#3d4f6b" }}>·</span>
+            <span style={{ color:"#00e5a0", fontWeight:700 }}>{a.market}</span>
+            <span style={{ background:"#00e5a033", color:"#00e5a0", padding:"1px 6px", borderRadius:3, fontSize:9 }}>{a.confidence}%</span>
+          </div>
+        ))}
+      </div>
+      <button onClick={() => setVisible(false)} style={{ flexShrink:0, background:"none", border:"none", color:"#3d4f6b", cursor:"pointer", fontSize:14, padding:"0 8px" }}>✕</button>
+    </div>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
 export default function Home() {
   const [games, setGames]           = useState([]);
   const [upcoming, setUpcoming]     = useState([]);
@@ -118,37 +166,36 @@ export default function Home() {
   const [loading, setLoading]       = useState(true);
   const [isDemo, setIsDemo]         = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
-  const [tab, setTab]               = useState("live"); // "live" | "upcoming"
+  const [tab, setTab]               = useState("live");
   const prevSigs    = useRef({});
   const intervalRef = useRef(null);
   const selectedRef = useRef(null);
   selectedRef.current = selected;
 
-  // ── Fetch — sem dependência de `selected` para evitar loop de intervalos ──
   const fetchGames = useCallback(async () => {
     try {
       const res  = await fetch("/api/games");
       const data = await res.json();
       let list     = data.games    || [];
       const upList = data.upcoming || [];
-
       const demoMode = list.length === 0;
-      if (demoMode) {
-        list = Array.from({ length: 5 }, (_, i) => generateDemoGame(i));
-      }
+
+      if (demoMode) list = Array.from({ length: 5 }, (_, i) => generateDemoGame(i));
       setIsDemo(demoMode);
+      if (!demoMode) list.sort((a,b) => projectCorners(b).confidence - projectCorners(a).confidence);
 
-      // Ordena por confiança
-      if (!demoMode) list.sort((a,b) => predictCorners(b).confidence - predictCorners(a).confidence);
-
-      // Alertas de sinal forte
+      // Gera alertas para sinais STRONG
       list.forEach(g => {
-        const pred = predictCorners(g);
+        const pred = projectCorners(g);
         if (pred.signal === "STRONG" && prevSigs.current[g.id] !== "STRONG") {
-          setAlerts(a => [
-            { id: Date.now() + g.id, game: `${g.home} × ${g.away}`, minute: g.minute, conf: pred.confidence },
-            ...a,
-          ].slice(0, 5));
+          setAlerts(a => [{
+            id: `${g.id}-${Date.now()}`,
+            game: `${g.homeShort || g.home.split(" ")[0]} × ${g.awayShort || g.away.split(" ")[0]}`,
+            minute: g.minute,
+            market: pred.market.betRange,
+            confidence: pred.confidence,
+            onClick: () => handleSelectRef.current(g),
+          }, ...a].slice(0, 6));
         }
         prevSigs.current[g.id] = pred.signal;
       });
@@ -158,58 +205,58 @@ export default function Home() {
       setLastUpdate(new Date());
       setLoading(false);
 
-      // Seleciona o mais forte ou atualiza o selecionado atual
       const cur = selectedRef.current;
       if (!cur || demoMode) {
-        const best = list[0];
-        if (best) { setSelected(best); setPrediction(predictCorners(best)); }
+        if (list[0]) { setSelected(list[0]); setPrediction(projectCorners(list[0])); }
       } else {
-        const updated = list.find(g => g.id === cur.id);
-        if (updated) { setSelected(updated); setPrediction(predictCorners(updated)); }
+        const upd = list.find(g => g.id === cur.id);
+        if (upd) { setSelected(upd); setPrediction(projectCorners(upd)); }
       }
     } catch (err) {
-      console.error(err);
       const demo = Array.from({ length: 5 }, (_, i) => generateDemoGame(i));
       setGames(demo); setIsDemo(true); setLoading(false);
-      if (!selectedRef.current && demo[0]) { setSelected(demo[0]); setPrediction(predictCorners(demo[0])); }
+      if (!selectedRef.current && demo[0]) { setSelected(demo[0]); setPrediction(projectCorners(demo[0])); }
     }
-  }, []); // ← sem dependências para nunca recriar
+  }, []);
 
-  // Monta intervalo uma única vez
+  const handleSelect = useCallback(async (game) => {
+    const pred = projectCorners(game);
+    setSelected(game); setPrediction(pred); setAiAnalysis("");
+    if (game.isUpcoming) return;
+    setAiLoading(true);
+    try {
+      const r = await fetch("/api/analyze", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ game, prediction: pred }),
+      });
+      const d = await r.json();
+      setAiAnalysis(d.analysis || d.error || "");
+    } catch { setAiAnalysis("Erro ao conectar."); }
+    setAiLoading(false);
+  }, []);
+
+  // Ref para usar dentro do closure de fetchGames
+  const handleSelectRef = useRef(handleSelect);
+  handleSelectRef.current = handleSelect;
+
   useEffect(() => {
     fetchGames();
     intervalRef.current = setInterval(fetchGames, 30000);
     return () => clearInterval(intervalRef.current);
   }, [fetchGames]);
 
-  const handleSelect = useCallback(async (game) => {
-    const pred = predictCorners(game);
-    setSelected(game); setPrediction(pred); setAiAnalysis("");
-    if (game.isUpcoming) return; // sem análise IA para jogos futuros
-    setAiLoading(true);
-    try {
-      const r = await fetch("/api/analyze", {
-        method: "POST", headers: { "Content-Type":"application/json" },
-        body: JSON.stringify({ game, prediction: pred }),
-      });
-      const d = await r.json();
-      setAiAnalysis(d.analysis || d.error || "Sem resposta.");
-    } catch { setAiAnalysis("Erro ao conectar."); }
-    setAiLoading(false);
-  }, []);
-
   if (loading) return (
     <div style={{ background:"#080b10", minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:12 }}>
       <div style={{ fontSize:36 }}>⚽</div>
-      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:13, color:"#00e5a0" }}>Buscando jogos via ESPN API ({53} ligas)...</div>
+      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:12, color:"#00e5a0" }}>Conectando à ESPN API — 53 ligas...</div>
       <div style={{ display:"flex", gap:6 }}>
         {[0,1,2].map(i => <div key={i} style={{ width:8, height:8, borderRadius:"50%", background:"#00e5a0", animation:`pulse 1.2s ${i*.2}s infinite` }}/>)}
       </div>
     </div>
   );
 
-  const sc = prediction ? sigColor(prediction.signal) : "#3d4f6b";
-  const displayGames = tab === "live" ? games : upcoming;
+  const pred = prediction;
+  const sc   = pred ? sigColor(pred.signal) : "#3d4f6b";
 
   return (
     <>
@@ -221,29 +268,23 @@ export default function Home() {
       <div style={{ background:"#080b10", minHeight:"100vh", color:"#c9d6e3" }}>
 
         {/* Header */}
-        <header style={{ background:"#060910", borderBottom:"1px solid #1c2333", padding:"10px 20px", display:"flex", justifyContent:"space-between", alignItems:"center", position:"sticky", top:0, zIndex:100 }}>
+        <header style={{ background:"#060910", borderBottom:"1px solid #1c2333", padding:"9px 20px", display:"flex", justifyContent:"space-between", alignItems:"center", position:"sticky", top:0, zIndex:100 }}>
           <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-            <div style={{ width:30, height:30, background:"#00e5a0", borderRadius:7, display:"flex", alignItems:"center", justifyContent:"center", fontSize:16 }}>⚽</div>
+            <div style={{ width:28, height:28, background:"#00e5a0", borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center", fontSize:15 }}>⚽</div>
             <div>
-              <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:18, letterSpacing:2 }}>
-                CORNER<span style={{ color:"#00e5a0" }}>EDGE</span>
-              </div>
-              <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", letterSpacing:2 }}>ESPN API · 53 LIGAS</div>
+              <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:17, letterSpacing:2 }}>CORNER<span style={{ color:"#00e5a0" }}>EDGE</span></div>
+              <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2 }}>ESPN · 53 LIGAS · ANÁLISE BILATERAL</div>
             </div>
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-            {isDemo && (
-              <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#f0c040", background:"#f0c04015", padding:"4px 10px", borderRadius:4, border:"1px solid #f0c04044" }}>
-                ⚠ SEM JOGOS AO VIVO AGORA
-              </div>
-            )}
+            {isDemo && <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#f0c040", background:"#f0c04012", padding:"3px 9px", borderRadius:4, border:"1px solid #f0c04040" }}>⚠ DEMO</div>}
             {[
               { label:"AO VIVO", value: isDemo ? 0 : games.length, color:"#00e5a0" },
               { label:"PRÓXIMOS", value: upcoming.length, color:"#f0c040" },
               { label:"ALERTAS", value: alerts.length, color:"#ff4560" },
             ].map((s,i) => (
               <div key={i} style={{ textAlign:"right" }}>
-                <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b" }}>{s.label}</div>
+                <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b" }}>{s.label}</div>
                 <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:20, color:s.color }}>{s.value}</div>
               </div>
             ))}
@@ -251,183 +292,187 @@ export default function Home() {
           </div>
         </header>
 
-        {/* Alerts */}
-        {alerts.length > 0 && (
-          <div style={{ background:"#0d1a0d", borderBottom:"1px solid #00e5a033", padding:"6px 20px", display:"flex", gap:8, overflowX:"auto" }}>
-            {alerts.map(a => (
-              <div key={a.id} style={{ flexShrink:0, fontFamily:"var(--mono)", fontSize:10, color:"#00e5a0", background:"#00e5a00d", padding:"3px 10px", borderRadius:4, border:"1px solid #00e5a033" }}>
-                🚨 {a.game} · {a.minute}' · {a.conf}%
-              </div>
-            ))}
-          </div>
-        )}
+        {/* Alert Banner */}
+        <AlertBanner alerts={alerts}/>
 
-        <div style={{ display:"flex", maxWidth:1200, margin:"0 auto", padding:16, gap:16 }}>
+        <div style={{ display:"flex", maxWidth:1280, margin:"0 auto", padding:14, gap:14 }}>
 
-          {/* Left panel */}
-          <div style={{ width:290, flexShrink:0 }}>
-            {/* Tabs */}
-            <div style={{ display:"flex", gap:0, marginBottom:12, borderRadius:6, overflow:"hidden", border:"1px solid #1c2333" }}>
-              {[
-                { key:"live",     label:`⚡ AO VIVO (${isDemo ? 0 : games.length})` },
-                { key:"upcoming", label:`🕐 PRÓXIMOS (${upcoming.length})` },
-              ].map(t => (
-                <button key={t.key} onClick={() => setTab(t.key)} style={{
-                  flex:1, padding:"7px 4px", fontFamily:"var(--mono)", fontSize:10, cursor:"pointer", border:"none",
-                  background: tab === t.key ? "#00e5a0" : "#0d1117",
-                  color: tab === t.key ? "#080b10" : "#3d4f6b",
-                  fontWeight: tab === t.key ? "700" : "400",
-                  transition:"all .2s",
-                }}>{t.label}</button>
+          {/* ── Left ── */}
+          <div style={{ width:285, flexShrink:0 }}>
+            <div style={{ display:"flex", gap:0, marginBottom:10, borderRadius:6, overflow:"hidden", border:"1px solid #1c2333" }}>
+              {[{ key:"live", label:`⚡ AO VIVO (${isDemo ? 0 : games.length})` }, { key:"upcoming", label:`🕐 PRÓXIMOS (${upcoming.length})` }].map(t => (
+                <button key={t.key} onClick={() => setTab(t.key)} style={{ flex:1, padding:"7px 4px", fontFamily:"var(--mono)", fontSize:9, cursor:"pointer", border:"none",
+                  background: tab === t.key ? "#00e5a0" : "#0d1117", color: tab === t.key ? "#080b10" : "#3d4f6b",
+                  fontWeight: tab === t.key ? "700" : "400", transition:"all .2s" }}>{t.label}</button>
               ))}
             </div>
-
-            <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", letterSpacing:2, marginBottom:8 }}>
-              {tab === "live" ? "▸ JOGOS EM ANDAMENTO" : "▸ PRÓXIMOS JOGOS (HORÁRIO BRASÍLIA)"}
-              {lastUpdate && <span style={{ float:"right" }}>ATT {lastUpdate.toLocaleTimeString("pt-BR")}</span>}
+            <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2, marginBottom:8 }}>
+              {tab === "live" ? "▸ EM ANDAMENTO" : "▸ PRÓXIMOS (BRASÍLIA)"}
+              {lastUpdate && <span style={{ float:"right" }}>{lastUpdate.toLocaleTimeString("pt-BR")}</span>}
             </div>
-
             {tab === "live" && games.length === 0 && (
-              <div style={{ fontFamily:"var(--mono)", fontSize:11, color:"#3d4f6b", textAlign:"center", padding:"30px 10px", background:"#0d1117", borderRadius:8, border:"1px solid #1c2333" }}>
-                Nenhum jogo ao vivo agora.<br/>
-                <span style={{ color:"#f0c040" }}>Veja os próximos jogos →</span>
+              <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#3d4f6b", textAlign:"center", padding:"24px 10px", background:"#0d1117", borderRadius:8, border:"1px solid #1c2333" }}>
+                Nenhum jogo ao vivo.<br/><span style={{ color:"#f0c040" }}>Ver próximos →</span>
               </div>
             )}
-
-            <div style={{ maxHeight:"calc(100vh - 200px)", overflowY:"auto", paddingRight:4 }}>
-              {(tab === "live" ? (isDemo ? games : games) : upcoming).map(g => (
+            <div style={{ maxHeight:"calc(100vh - 180px)", overflowY:"auto", paddingRight:3 }}>
+              {(tab === "live" ? games : upcoming).map(g => (
                 <GameCard key={g.id} game={g} onSelect={handleSelect} isSelected={selected?.id === g.id}/>
               ))}
             </div>
           </div>
 
-          {/* Right panel */}
+          {/* ── Right ── */}
           {selected && (
             <div style={{ flex:1, minWidth:0 }}>
 
-              {/* Match header */}
-              <div style={{ background:"#0d1117", border:"1px solid #1c2333", borderRadius:10, padding:"15px 20px", marginBottom:14 }}>
+              {/* Match Header */}
+              <div style={{ background:"#0d1117", border:"1px solid #1c2333", borderRadius:10, padding:"14px 18px", marginBottom:12 }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:8 }}>
                   <div>
-                    <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:22, letterSpacing:1 }}>
+                    <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:20, letterSpacing:1 }}>
                       {selected.home} <span style={{ color:"#3d4f6b", fontWeight:300 }}>×</span> {selected.away}
                     </div>
-                    <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#3d4f6b", marginTop:3 }}>
-                      {selected.leagueCountry} {selected.league}&nbsp;·&nbsp;
-                      {selected.isUpcoming ? (
-                        <span style={{ color:"#f0c040" }}>🕐 INÍCIO ÀS {formatKickoff(selected.startTime)} (BRASÍLIA)</span>
-                      ) : (
-                        <><Dot/>&nbsp;<span style={{ color:"#00e5a0" }}>AO VIVO {selected.minute}'</span></>
-                      )}
-                      {selected.isDemo && <span style={{ color:"#f0c040", marginLeft:8 }}>[SIMULAÇÃO]</span>}
+                    <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", marginTop:2 }}>
+                      {selected.leagueCountry} {selected.league} ·&nbsp;
+                      {selected.isUpcoming
+                        ? <span style={{ color:"#f0c040" }}>🕐 {formatKickoff(selected.startTime)} (Brasília)</span>
+                        : <><Dot/>&nbsp;<span style={{ color:"#00e5a0" }}>AO VIVO {selected.minute}' {selected.period===2 ? "· 2ºT" : "· 1ºT"}</span></>}
+                      {selected.isDemo && <span style={{ color:"#f0c040", marginLeft:6 }}>[SIMULAÇÃO]</span>}
                     </div>
                   </div>
-                  <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:48, letterSpacing:-2, lineHeight:1 }}>
-                    {selected.isUpcoming ? (
-                      <span style={{ fontSize:20, color:"#f0c040", fontFamily:"var(--mono)" }}>EM BREVE</span>
-                    ) : (
-                      <>{selected.score.home}<span style={{ color:"#3d4f6b", fontSize:28 }}>–</span>{selected.score.away}</>
-                    )}
+                  <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:44, letterSpacing:-2, lineHeight:1 }}>
+                    {selected.isUpcoming
+                      ? <span style={{ fontSize:16, color:"#f0c040", fontFamily:"var(--mono)" }}>EM BREVE</span>
+                      : <>{selected.score.home}<span style={{ color:"#3d4f6b", fontSize:26 }}>–</span>{selected.score.away}</>}
                   </div>
                 </div>
               </div>
 
               {selected.isUpcoming ? (
                 <div style={{ background:"#0d1117", border:"1px solid #1c2333", borderRadius:10, padding:24, textAlign:"center" }}>
-                  <div style={{ fontSize:40, marginBottom:12 }}>🕐</div>
-                  <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:20, color:"#f0c040", marginBottom:8 }}>
-                    Jogo começa às {formatKickoff(selected.startTime)} (horário de Brasília)
+                  <div style={{ fontSize:36, marginBottom:10 }}>🕐</div>
+                  <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:18, color:"#f0c040" }}>
+                    Início às {formatKickoff(selected.startTime)} (Brasília)
                   </div>
-                  <div style={{ fontFamily:"var(--mono)", fontSize:11, color:"#3d4f6b" }}>
-                    A análise de escanteios ficará disponível quando o jogo começar.
-                  </div>
+                  <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#3d4f6b", marginTop:6 }}>Análise disponível quando o jogo começar.</div>
                 </div>
-              ) : prediction && (
+              ) : pred && (
                 <>
-                  <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit, minmax(240px, 1fr))", gap:14, marginBottom:14 }}>
+                  {/* ── Prediction Row ── */}
+                  <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
 
-                    {/* Ring */}
-                    <div style={{ background:"#0d1117", border:`1px solid ${sc}44`, borderRadius:10, padding:18 }}>
-                      <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", letterSpacing:2, marginBottom:14 }}>▸ PREDIÇÃO ESCANTEIOS</div>
-                      <Ring value={prediction.confidence} signal={prediction.signal}/>
-                      <div style={{ textAlign:"center", marginTop:14 }}>
-                        <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:18, letterSpacing:1, color:sc, background:`${sc}12`, padding:"7px 18px", borderRadius:6, display:"inline-block", border:`1px solid ${sc}44` }}>
-                          {prediction.recommendation}
+                    {/* Projeção principal */}
+                    <div style={{ background:"#0d1117", border:`1px solid ${sc}55`, borderRadius:10, padding:18 }}>
+                      <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2, marginBottom:12 }}>▸ PROJEÇÃO ESCANTEIOS · PRÓXIMOS 10MIN</div>
+                      <Ring value={pred.confidence} signal={pred.signal}/>
+                      <div style={{ marginTop:14 }}>
+                        <ProjectionBar value={pred.projected10}/>
+                      </div>
+                      <div style={{ marginTop:14, textAlign:"center" }}>
+                        <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:20, letterSpacing:1, color:sc, background:`${sc}12`, padding:"8px 16px", borderRadius:6, display:"inline-block", border:`1px solid ${sc}44` }}>
+                          {pred.market.betRange}
                         </div>
-                        <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#3d4f6b", marginTop:6 }}>Janela: {prediction.predictedWindow}</div>
+                        <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", marginTop:5 }}>
+                          ~{pred.projected10} escanteios projetados · mult pressão {pred.pressureMult}×
+                        </div>
                       </div>
                     </div>
 
-                    {/* Factors */}
+                    {/* Fatores */}
                     <div style={{ background:"#0d1117", border:"1px solid #1c2333", borderRadius:10, padding:18 }}>
-                      <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", letterSpacing:2, marginBottom:14 }}>▸ FATORES ATIVOS ({prediction.factors.length})</div>
-                      {prediction.factors.length === 0 ? (
-                        <div style={{ fontFamily:"var(--mono)", fontSize:11, color:"#3d4f6b" }}>Nenhum fator ativo</div>
-                      ) : prediction.factors.map((f,i) => (
-                        <div key={i} style={{ marginBottom:10 }}>
-                          <div style={{ display:"flex", justifyContent:"space-between", marginBottom:3 }}>
-                            <span style={{ fontFamily:"var(--mono)", fontSize:10, color:"#c9d6e3" }}>{f.label}</span>
-                            <span style={{ fontFamily:"var(--mono)", fontSize:10, color:"#00e5a0" }}>+{f.weight}</span>
-                          </div>
-                          <div style={{ height:3, background:"#1a2235", borderRadius:2 }}>
-                            <div style={{ height:"100%", width:`${(f.weight/25)*100}%`, background:"#00e5a0", borderRadius:2, transition:"width 1s" }}/>
-                          </div>
-                        </div>
-                      ))}
+                      <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2, marginBottom:12 }}>▸ FATORES ATIVOS ({pred.factors.length})</div>
+                      {pred.factors.length === 0
+                        ? <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#3d4f6b" }}>Sem fatores de pressão detectados</div>
+                        : <div style={{ overflowY:"auto", maxHeight:260 }}>
+                          {pred.factors.map((f,i) => (
+                            <div key={i} style={{ marginBottom:9, paddingBottom:9, borderBottom:"1px solid #1a2235" }}>
+                              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:2 }}>
+                                <span style={{ fontFamily:"var(--mono)", fontSize:10, color: impactColor(f.impact), flex:1 }}>{f.text}</span>
+                                <span style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", marginLeft:8, whiteSpace:"nowrap" }}>{f.detail}</span>
+                              </div>
+                              <div style={{ height:2, background:"#1a2235", borderRadius:1 }}>
+                                <div style={{ height:"100%", width: f.impact==="high" ? "100%" : f.impact==="medium" ? "60%" : "30%",
+                                  background: impactColor(f.impact), borderRadius:1 }}/>
+                              </div>
+                            </div>
+                          ))}
+                        </div>}
                     </div>
                   </div>
 
-                  {/* Stats */}
-                  <div style={{ background:"#0d1117", border:"1px solid #1c2333", borderRadius:10, padding:18, marginBottom:14 }}>
+                  {/* ── Stats bilaterais ── */}
+                  <div style={{ background:"#0d1117", border:"1px solid #1c2333", borderRadius:10, padding:18, marginBottom:12 }}>
                     <div style={{ display:"flex", justifyContent:"space-between", marginBottom:14 }}>
-                      <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", letterSpacing:2 }}>▸ ESTATÍSTICAS AO VIVO</div>
-                      <div style={{ display:"flex", gap:16 }}>
-                        <span style={{ fontFamily:"var(--mono)", fontSize:10, color:"#00e5a0" }}>{selected.homeShort}</span>
-                        <span style={{ fontFamily:"var(--mono)", fontSize:10, color:"#f0c040" }}>{selected.awayShort}</span>
+                      <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2 }}>▸ ESTATÍSTICAS BILATERAIS</div>
+                      <div style={{ display:"flex", gap:14 }}>
+                        <span style={{ fontFamily:"var(--mono)", fontSize:10, color:"#00e5a0", fontWeight:700 }}>{selected.homeShort}</span>
+                        <span style={{ fontFamily:"var(--mono)", fontSize:10, color:"#f0c040", fontWeight:700 }}>{selected.awayShort}</span>
                       </div>
                     </div>
-                    <StatBar label="Posse (%)" homeVal={selected.possession.home} awayVal={selected.possession.away}/>
-                    <StatBar label="Ataques Perigosos" homeVal={selected.dangerousAttacks.home} awayVal={selected.dangerousAttacks.away}/>
-                    <StatBar label="Chutes no Alvo" homeVal={selected.onTarget.home} awayVal={selected.onTarget.away}/>
-                    <StatBar label="Total Chutes" homeVal={selected.shots.home} awayVal={selected.shots.away}/>
-                    <StatBar label="Escanteios ⭐" homeVal={selected.corners.home} awayVal={selected.corners.away}/>
+                    {/* Stats agrupadas por importância para escanteios */}
+                    <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2, marginBottom:8 }}>— INDICADORES DIRETOS DE ESCANTEIO —</div>
+                    <StatBar label="Escanteios ⭐" homeVal={selected.corners?.home} awayVal={selected.corners?.away} highlight/>
+                    <StatBar label="Cruzamentos ⭐" homeVal={selected.crosses?.home} awayVal={selected.crosses?.away} highlight/>
+                    <StatBar label="Chutes Bloqueados" homeVal={selected.blockedShots?.home} awayVal={selected.blockedShots?.away}/>
+                    <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2, margin:"12px 0 8px" }}>— PRESSÃO E VOLUME —</div>
+                    <StatBar label="Posse (%)" homeVal={selected.possession?.home?.toFixed(0)} awayVal={selected.possession?.away?.toFixed(0)}/>
+                    <StatBar label="Chutes no Alvo" homeVal={selected.onTarget?.home} awayVal={selected.onTarget?.away}/>
+                    <StatBar label="Total Chutes" homeVal={selected.shots?.home} awayVal={selected.shots?.away}/>
+                    <StatBar label="Defesas Goleiro" homeVal={selected.saves?.home} awayVal={selected.saves?.away}/>
+                    <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2, margin:"12px 0 8px" }}>— CONTEXTO —</div>
                     <StatBar label="Faltas" homeVal={selected.fouls?.home} awayVal={selected.fouls?.away}/>
-                    <StatBar label="Cruzamentos" homeVal={selected.crosses?.home} awayVal={selected.crosses?.away}/>
-                    <StatBar label="Passes" homeVal={selected.passes?.home} awayVal={selected.passes?.away}/>
                     <StatBar label="Impedimentos" homeVal={selected.offsides?.home} awayVal={selected.offsides?.away}/>
+                    <StatBar label="Cartões Amarelos" homeVal={selected.yellowCards?.home} awayVal={selected.yellowCards?.away}/>
+                    <StatBar label="Bolas Longas" homeVal={selected.longBalls?.home} awayVal={selected.longBalls?.away}/>
+
+                    {/* Cards de resumo */}
                     <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:8, marginTop:14 }}>
                       {[
                         { label:"MINUTO", value:`${selected.minute}'`, color: selected.minute >= 75 ? "#ff4560" : "#c9d6e3" },
-                        { label:"ESCANTEIOS", value:`${selected.corners.home}–${selected.corners.away}`, color:"#00e5a0" },
-                        { label:"CARTÕES", value:`${(selected.yellowCards?.home??0)+(selected.yellowCards?.away??0)}🟨`, color:"#f0c040" },
-                        { label:"PERÍODO", value: selected.period === 2 ? "2ºT" : "1ºT", color:"#00e5a0" },
+                        { label:"ESC TOTAL", value:`${(selected.corners?.home??0)+(selected.corners?.away??0)}`, color:"#00e5a0" },
+                        { label:"CRUZAMENTOS", value:`${(selected.crosses?.home??0)+(selected.crosses?.away??0)}`, color:"#f0c040" },
+                        { label:"PROJ 10MIN", value:`~${pred.projected10}`, color: pred.projected10 >= 2 ? "#00e5a0" : "#f0c040" },
                       ].map((s,i) => (
-                        <div key={i} style={{ background:"#0a0f18", borderRadius:8, padding:"10px 10px", border:"1px solid #1c2333" }}>
-                          <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", letterSpacing:1, marginBottom:4 }}>{s.label}</div>
+                        <div key={i} style={{ background:"#0a0f18", borderRadius:7, padding:"9px 10px", border:"1px solid #1c2333" }}>
+                          <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:1, marginBottom:3 }}>{s.label}</div>
                           <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:18, color:s.color }}>{s.value}</div>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* AI */}
-                  <div style={{ background:"#0d1117", border:"1px solid #00e5a022", borderRadius:10, padding:18 }}>
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-                      <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", letterSpacing:2 }}>▸ ANÁLISE IA — CLAUDE</div>
-                      <button onClick={() => handleSelect(selected)} style={{ fontFamily:"var(--mono)", fontSize:10, color:"#00e5a0", background:"#00e5a011", border:"1px solid #00e5a033", borderRadius:4, padding:"4px 10px", cursor:"pointer" }}>↻ ATUALIZAR</button>
+                  {/* ── Mercado sugerido ── */}
+                  <div style={{ background:"#0d1117", border:`1px solid ${sc}33`, borderRadius:10, padding:18, marginBottom:12 }}>
+                    <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2, marginBottom:12 }}>▸ MERCADOS SUGERIDOS</div>
+                    <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+                      <div style={{ background:`${sc}0d`, border:`1px solid ${sc}33`, borderRadius:8, padding:"12px 14px" }}>
+                        <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", marginBottom:4 }}>PRÓXIMOS 10 MINUTOS</div>
+                        <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:16, color:sc }}>{pred.market.betRange}</div>
+                        <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#5a7090", marginTop:3 }}>Projeção: {pred.projected10} escanteios</div>
+                      </div>
+                      <div style={{ background:"#f0c04008", border:"1px solid #f0c04033", borderRadius:8, padding:"12px 14px" }}>
+                        <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", marginBottom:4 }}>TOTAL DO JOGO</div>
+                        <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:16, color:"#f0c040" }}>{pred.market.gameRange}</div>
+                        <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#5a7090", marginTop:3 }}>Projeção final: {pred.market.projGame}</div>
+                      </div>
                     </div>
-                    {aiLoading ? (
-                      <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                        {[0,1,2].map(i => <div key={i} style={{ width:6, height:6, borderRadius:"50%", background:"#00e5a0", animation:`pulse 1.2s ${i*.2}s infinite` }}/>)}
-                        <span style={{ fontFamily:"var(--mono)", fontSize:11, color:"#3d4f6b" }}>Claude analisando...</span>
-                      </div>
-                    ) : aiAnalysis ? (
-                      <div style={{ fontFamily:"var(--mono)", fontSize:12, color:"#c9d6e3", lineHeight:1.8, background:"#060a14", borderRadius:6, padding:"12px 14px", borderLeft:"3px solid #00e5a0" }}>
-                        {aiAnalysis}
-                      </div>
-                    ) : (
-                      <div style={{ fontFamily:"var(--mono)", fontSize:11, color:"#3d4f6b" }}>Clique em um jogo ou em Atualizar para análise da IA.</div>
-                    )}
+                  </div>
+
+                  {/* ── Análise IA ── */}
+                  <div style={{ background:"#0d1117", border:"1px solid #00e5a018", borderRadius:10, padding:18 }}>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                      <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2 }}>▸ ANÁLISE IA — CLAUDE</div>
+                      <button onClick={() => handleSelect(selected)} style={{ fontFamily:"var(--mono)", fontSize:9, color:"#00e5a0", background:"#00e5a011", border:"1px solid #00e5a033", borderRadius:4, padding:"3px 9px", cursor:"pointer" }}>↻</button>
+                    </div>
+                    {aiLoading
+                      ? <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+                          {[0,1,2].map(i => <div key={i} style={{ width:6, height:6, borderRadius:"50%", background:"#00e5a0", animation:`pulse 1.2s ${i*.2}s infinite` }}/>)}
+                          <span style={{ fontFamily:"var(--mono)", fontSize:10, color:"#3d4f6b" }}>Claude analisando...</span>
+                        </div>
+                      : aiAnalysis
+                        ? <div style={{ fontFamily:"var(--mono)", fontSize:11, color:"#c9d6e3", lineHeight:1.8, background:"#060a14", borderRadius:6, padding:"11px 14px", borderLeft:"3px solid #00e5a0" }}>{aiAnalysis}</div>
+                        : <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#3d4f6b" }}>Clique em Atualizar para análise da IA.</div>}
                   </div>
                 </>
               )}
@@ -436,8 +481,8 @@ export default function Home() {
         </div>
 
         <footer style={{ borderTop:"1px solid #1c2333", padding:"10px 20px", textAlign:"center" }}>
-          <span style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", letterSpacing:1 }}>
-            CORNEREDGE v3.0 · ESPN API + CLAUDE · APOSTAS ENVOLVEM RISCO FINANCEIRO
+          <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:1 }}>
+            CORNEREDGE v4.0 · ESPN API + CLAUDE · APOSTAS ENVOLVEM RISCO FINANCEIRO · USE COM RESPONSABILIDADE
           </span>
         </footer>
       </div>

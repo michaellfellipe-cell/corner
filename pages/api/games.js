@@ -199,6 +199,10 @@ function normalizeGame(event, league, parsed, isUpcomingGame) {
   const accPassA  = getStat(parsed, "away", "accuratePasses") ?? 0;
   const longH     = getStat(parsed, "home", "totalLongBalls") ?? 0;
   const longA     = getStat(parsed, "away", "totalLongBalls") ?? 0;
+  const blockedH  = getStat(parsed, "home", "blockedShots") ?? 0;
+  const blockedA  = getStat(parsed, "away", "blockedShots") ?? 0;
+  const clearH    = getStat(parsed, "home", "effectiveClearance", "totalClearance") ?? 0;
+  const clearA    = getStat(parsed, "away", "effectiveClearance", "totalClearance") ?? 0;
 
   return {
     id:            event.id,
@@ -231,6 +235,8 @@ function normalizeGame(event, league, parsed, isUpcomingGame) {
     passes:           { home: passH,  away: passA  },
     accuratePasses:   { home: accPassH, away: accPassA },
     longBalls:        { home: longH,  away: longA  },
+    blockedShots:     { home: blockedH, away: blockedA },
+    clearances:       { home: clearH, away: clearA },
     pressureIndex:    null,
     venue:            comp.venue?.fullName || null,
   };
