@@ -120,11 +120,12 @@ export default function Home() {
       let list = data.games || [];
 
       if (list.length === 0) {
-        // Sem jogos ao vivo → usa demo
         list = Array.from({ length: DEMO_GAME_COUNT }, (_, i) => generateDemoGame(i));
         setIsDemo(true);
       } else {
         setIsDemo(false);
+        // Ordena por confiança — STRONG primeiro
+        list.sort((a, b) => predictCorners(b).confidence - predictCorners(a).confidence);
       }
 
       // Detecta novos sinais fortes para alertas
