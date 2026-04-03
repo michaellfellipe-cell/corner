@@ -1,5 +1,8 @@
 /**
- * /pages/api/games.js — ESPN proxy com jogos ao vivo E próximos jogos
+ * /pages/api/games.js
+ * 1) Busca scoreboard de todas as ligas para encontrar jogos ao vivo
+ * 2) Para cada jogo ao vivo, busca o endpoint /summary para obter stats reais
+ * Clock ESPN é PROGRESSIVO: rawClock = segundos jogados
  */
 
 const LEAGUES = [
@@ -60,148 +63,217 @@ const LEAGUES = [
 ];
 
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer";
+const HEADERS = {
+  "Accept": "application/json",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+};
 
-function isLive(event) {
-  const state = (event?.status?.type?.state || "").toLowerCase();
-  const name  = (event?.status?.type?.name  || "").toLowerCase();
-  const desc  = (event?.status?.type?.description || "").toLowerCase();
-  return state === "in" || state === "halftime" ||
-    name.includes("inprogress") || name.includes("halftime") ||
-    desc.includes("progress") || desc.includes(" half");
+function isLive(e) {
+  const state = (e?.status?.type?.state || "").toLowerCase();
+  const name  = (e?.status?.type?.name  || "").toLowerCase();
+  return state === "in" || state === "halftime" || name.includes("inprogress") || name.includes("halftime");
 }
 
-function isUpcoming(event) {
-  return (event?.status?.type?.state || "").toLowerCase() === "pre";
+function isUpcoming(e) {
+  return (e?.status?.type?.state || "").toLowerCase() === "pre";
 }
 
-function getStartTime(event) {
-  return event.date || event.competitions?.[0]?.date || null;
+// Clock ESPN é PROGRESSIVO (segundos jogados)
+function extractMinute(event) {
+  const rawClock = event.status?.clock ?? 0;
+  const period   = event.status?.period || 1;
+  const display  = event.status?.displayClock || "";
+
+  // displayClock formato "8'" ou "45+2'" → usa direto
+  const m = display.match(/^(\d+)/);
+  if (m) {
+    const base = parseInt(m[1], 10);
+    // Detecta acréscimos: "45+2'"
+    const extra = display.match(/\+(\d+)/);
+    return base + (extra ? parseInt(extra[1], 10) : 0);
+  }
+  // Fallback: rawClock = segundos jogados no período atual
+  if (rawClock > 0) {
+    return period === 1
+      ? Math.round(rawClock / 60)
+      : 45 + Math.round(rawClock / 60);
+  }
+  return period === 2 ? 55 : 25;
 }
 
+// ── Busca summary de um jogo para obter stats detalhadas ────────────────────
+async function fetchGameSummary(leagueId, eventId) {
+  try {
+    const url = `${ESPN_BASE}/${leagueId}/summary?event=${eventId}`;
+    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(6000) });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+// ── Extrai stats do boxscore do summary ─────────────────────────────────────
+function extractSummaryStats(summary, homeTeamId, awayTeamId) {
+  if (!summary?.boxscore) return {};
+
+  const teams = summary.boxscore.teams || [];
+  const r = {};
+
+  // ESPN summary boxscore.teams = [{team: {id}, statistics: [{name, displayValue, ...}]}]
+  for (const teamData of teams) {
+    const tid  = teamData.team?.id;
+    const isH  = tid === homeTeamId;
+    const isA  = tid === awayTeamId;
+    if (!isH && !isA) continue;
+
+    const side = isH ? "home" : "away";
+    for (const stat of (teamData.statistics || [])) {
+      const name = (stat.name || stat.label || "").toLowerCase().trim();
+      const val  = parseFloat(stat.displayValue ?? stat.value ?? stat.abbreviation ?? 0);
+      if (isNaN(val)) continue;
+
+      switch (name) {
+        case "possessionpct":
+        case "possession":         r[`possession_${side}`]        = val; break;
+        case "shotstotal":
+        case "shots":              r[`shots_${side}`]             = val; break;
+        case "shotsongoal":
+        case "shotsontarget":      r[`onTarget_${side}`]          = val; break;
+        case "cornerkicks":
+        case "corners":            r[`corners_${side}`]           = val; break;
+        case "foulscommitted":
+        case "fouls":              r[`fouls_${side}`]             = val; break;
+        case "yellowcards":        r[`yellow_${side}`]            = val; break;
+        case "redcards":           r[`red_${side}`]               = val; break;
+        case "offsides":           r[`offsides_${side}`]          = val; break;
+        case "dangerousattacks":   r[`dangerousAttacks_${side}`]  = val; break;
+        case "blockedshots":       r[`blockedShots_${side}`]      = val; break;
+        case "saves":              r[`saves_${side}`]             = val; break;
+        case "totalshots":         r[`shots_${side}`]             = val; break;
+        case "shotsongoalpct":     break; // skip percentages
+        default:                   break;
+      }
+    }
+  }
+  return r;
+}
+
+// ── Busca scoreboard de uma liga ────────────────────────────────────────────
 async function fetchLeague(league) {
   try {
     const res = await fetch(`${ESPN_BASE}/${league.id}/scoreboard`, {
-      headers: {
-        "Accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      },
+      headers: HEADERS, signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return { league, live: [], upcoming: [] };
 
-    const data  = await res.json();
+    const data   = await res.json();
     const events = data.events || [];
 
     return {
       league,
-      live:     events.filter(isLive).map(e => normalizeGame(e, league, false)),
-      upcoming: events.filter(isUpcoming).map(e => normalizeGame(e, league, true)),
+      live:     events.filter(isLive),
+      upcoming: events.filter(isUpcoming).map(e => normalizeGame(e, league, {}, true)),
     };
   } catch {
     return { league, live: [], upcoming: [] };
   }
 }
 
-function normalizeGame(event, league, isUpcomingGame) {
+// ── Normaliza um evento + stats em formato padrão ───────────────────────────
+function normalizeGame(event, league, stats, isUpcomingGame) {
   const comp        = event.competitions?.[0] || {};
   const competitors = comp.competitors || [];
   const home        = competitors.find(c => c.homeAway === "home") || {};
   const away        = competitors.find(c => c.homeAway === "away") || {};
+  const minute      = isUpcomingGame ? 0 : extractMinute(event);
   const period      = event.status?.period || 1;
-  const rawClock    = event.status?.clock ?? 0;
-  const displayClock = event.status?.displayClock || "";
 
-  let minute = 0;
-  const m = displayClock.match(/^(\d+)/);
-  if (m) minute = parseInt(m[1], 10);
-  else if (rawClock > 0) minute = period === 1 ? Math.max(1, Math.round((2700 - rawClock) / 60)) : Math.max(46, Math.round((5400 - rawClock) / 60));
-  else minute = isUpcomingGame ? 0 : (period === 2 ? 55 : 25);
-  minute = Math.min(90, Math.max(0, minute));
+  // Posse: garante que soma 100
+  let posH = stats.possession_home ?? 50;
+  let posA = stats.possession_away ?? (100 - posH);
 
-  const stats = extractStats(comp.statistics || []);
+  // Ataques perigosos: estima se não disponível
+  const daH = stats.dangerousAttacks_home ?? estimateDA(stats.shots_home ?? 0, posH);
+  const daA = stats.dangerousAttacks_away ?? estimateDA(stats.shots_away ?? 0, posA);
 
   return {
-    id:           event.id,
-    league:       league.name,
+    id:            event.id,
+    league:        league.name,
     leagueCountry: league.country,
-    home:         home.team?.displayName || home.team?.shortDisplayName || "Home",
-    homeShort:    home.team?.abbreviation || "HME",
-    away:         away.team?.displayName  || away.team?.shortDisplayName  || "Away",
-    awayShort:    away.team?.abbreviation || "AWY",
-    score:        { home: parseInt(home.score) || 0, away: parseInt(away.score) || 0 },
-    minute,
-    period,
-    clock:        displayClock,
-    startTime:    getStartTime(event),
-    statusDetail: event.status?.type?.description || "",
-    isUpcoming:   isUpcomingGame,
-    isDemo:       false,
-    possession:       { home: stats.possessionHome  ?? 50, away: stats.possessionAway  ?? 50 },
-    shots:            { home: stats.shotsHome        ?? 0,  away: stats.shotsAway        ?? 0  },
-    onTarget:         { home: stats.onTargetHome     ?? 0,  away: stats.onTargetAway     ?? 0  },
-    corners:          { home: stats.cornersHome      ?? 0,  away: stats.cornersAway      ?? 0  },
-    fouls:            { home: stats.foulsHome        ?? 0,  away: stats.foulsAway        ?? 0  },
-    dangerousAttacks: {
-      home: stats.dangerousAttacksHome ?? estimateDA(stats.shotsHome ?? 0, stats.possessionHome ?? 50),
-      away: stats.dangerousAttacksAway ?? estimateDA(stats.shotsAway ?? 0, stats.possessionAway ?? 50),
-    },
-    pressureIndex: null,
+    leagueId:      league.id,
+    home:          home.team?.displayName || home.team?.shortDisplayName || "Home",
+    homeShort:     home.team?.abbreviation || "HME",
+    homeId:        home.team?.id,
+    away:          away.team?.displayName || away.team?.shortDisplayName || "Away",
+    awayShort:     away.team?.abbreviation || "AWY",
+    awayId:        away.team?.id,
+    score:         { home: parseInt(home.score) || 0, away: parseInt(away.score) || 0 },
+    minute, period,
+    clock:         event.status?.displayClock || "",
+    startTime:     event.date || comp.date || null,
+    statusDetail:  event.status?.type?.description || "",
+    isUpcoming:    !!isUpcomingGame,
+    isDemo:        false,
+    // Stats
+    possession:       { home: posH,                    away: posA                    },
+    shots:            { home: stats.shots_home    ?? 0, away: stats.shots_away    ?? 0 },
+    onTarget:         { home: stats.onTarget_home ?? 0, away: stats.onTarget_away ?? 0 },
+    corners:          { home: stats.corners_home  ?? 0, away: stats.corners_away  ?? 0 },
+    fouls:            { home: stats.fouls_home    ?? 0, away: stats.fouls_away    ?? 0 },
+    yellowCards:      { home: stats.yellow_home   ?? 0, away: stats.yellow_away   ?? 0 },
+    dangerousAttacks: { home: daH,                      away: daA                     },
+    saves:            { home: stats.saves_home    ?? 0, away: stats.saves_away    ?? 0 },
+    offsides:         { home: stats.offsides_home ?? 0, away: stats.offsides_away ?? 0 },
+    pressureIndex:    null,
+    venue:            comp.venue?.fullName || null,
   };
-}
-
-function extractStats(arr) {
-  const r = {};
-  const MAP = {
-    "possession": ["possessionHome","possessionAway"], "ball possession": ["possessionHome","possessionAway"],
-    "shots": ["shotsHome","shotsAway"], "total shots": ["shotsHome","shotsAway"],
-    "shots on target": ["onTargetHome","onTargetAway"], "shots on goal": ["onTargetHome","onTargetAway"],
-    "corner kicks": ["cornersHome","cornersAway"], "corners": ["cornersHome","cornersAway"],
-    "fouls": ["foulsHome","foulsAway"],
-    "dangerous attacks": ["dangerousAttacksHome","dangerousAttacksAway"],
-  };
-  for (const g of arr) {
-    for (const s of (g.stats || [])) {
-      const label = (s.label || s.name || "").toLowerCase().trim();
-      const keys = MAP[label];
-      if (!keys) continue;
-      const h = parseFloat(s.homeValue ?? s.home);
-      const a = parseFloat(s.awayValue ?? s.away);
-      if (!isNaN(h)) r[keys[0]] = h;
-      if (!isNaN(a)) r[keys[1]] = a;
-    }
-  }
-  if (r.possessionHome !== undefined && r.possessionAway === undefined) r.possessionAway = 100 - r.possessionHome;
-  return r;
 }
 
 function estimateDA(shots, possession) {
   return Math.round(shots * 3.2 + (possession / 100) * 16);
 }
 
+// ── Handler principal ────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).end();
 
-  const settled = await Promise.allSettled(LEAGUES.map(fetchLeague));
+  // FASE 1: Busca scoreboards de todas as ligas em paralelo
+  const leagueResults = await Promise.allSettled(LEAGUES.map(fetchLeague));
 
-  const liveGames     = [];
+  const liveRaw    = []; // { event, league }
   const upcomingGames = [];
 
-  for (const r of settled) {
+  for (const r of leagueResults) {
     if (r.status !== "fulfilled") continue;
-    liveGames.push(...r.value.live);
-    upcomingGames.push(...r.value.upcoming);
+    const { league, live, upcoming } = r.value;
+    for (const e of live)     liveRaw.push({ event: e, league });
+    for (const g of upcoming) upcomingGames.push(g);
   }
 
-  // Ordena upcoming por horário de início
-  upcomingGames.sort((a, b) => {
-    if (!a.startTime) return 1;
-    if (!b.startTime) return -1;
-    return new Date(a.startTime) - new Date(b.startTime);
-  });
+  // FASE 2: Busca summary de cada jogo ao vivo para obter stats reais
+  // Limita a 25 simultâneos para não sobrecarregar
+  const liveGames = await Promise.all(
+    liveRaw.map(async ({ event, league }) => {
+      const summary = await fetchGameSummary(league.id, event.id);
+      const comp    = event.competitions?.[0] || {};
+      const comps   = comp.competitors || [];
+      const homeId  = comps.find(c => c.homeAway === "home")?.team?.id;
+      const awayId  = comps.find(c => c.homeAway === "away")?.team?.id;
+      const stats   = summary ? extractSummaryStats(summary, homeId, awayId) : {};
+      return normalizeGame(event, league, stats, false);
+    })
+  );
+
+  // Ordena upcoming por horário
+  upcomingGames.sort((a, b) =>
+    a.startTime && b.startTime ? new Date(a.startTime) - new Date(b.startTime) : 0
+  );
 
   res.setHeader("Cache-Control", "no-store");
   return res.status(200).json({
     games:          liveGames,
-    upcoming:       upcomingGames.slice(0, 30), // próximos 30 jogos
+    upcoming:       upcomingGames.slice(0, 30),
     liveCount:      liveGames.length,
     upcomingCount:  upcomingGames.length,
     leaguesQueried: LEAGUES.length,
