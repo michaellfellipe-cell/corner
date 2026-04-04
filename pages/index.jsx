@@ -188,16 +188,17 @@ function GameCard({ game, onSelect, isSelected }) {
           ESC {game.corners?.home??0}–{game.corners?.away??0} · CRZ {(game.crosses?.home??0)+(game.crosses?.away??0)}
         </span>
         <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+          {pred.isFastTrack && <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#f0c040" }}>⚡</span>}
           <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b" }}>{pred.phase}</span>
           <span style={{ fontFamily:"var(--mono)", fontSize:9, color:"#4a6070" }}>~{pred.projected10}/10m</span>
           <span style={{
             fontFamily:"var(--display)", fontWeight:700, fontSize:10, letterSpacing:1,
             color: (isRed || isGreen) ? "#080b10" : sc,
-            background: isTooLate ? "#1a2235" : sc,
+            background: isTooLate ? "#1a2235" : pred.isFastTrack ? "#f0c040" : sc,
             padding:"2px 7px", borderRadius:4,
             opacity: isTooLate ? 0.5 : 1,
           }}>
-            {isTooLate ? `⏰ ${conf}%` : isRed ? `🔴 ${conf}%` : isGreen ? `✓ ${conf}%` : `${conf}%`}
+            {isTooLate ? `⏰ ${conf}%` : pred.isFastTrack ? `⚡ ${conf}%` : isRed ? `🔴 ${conf}%` : isGreen ? `✓ ${conf}%` : `${conf}%`}
           </span>
         </div>
       </div>
@@ -470,8 +471,20 @@ export default function Home() {
                   {/* Predição + Fatores */}
                   <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
 
-                    <div style={{ background:"#0d1117", border:`1px solid ${isStrong ? "#00e5a044" : "#1c2333"}`, borderRadius:10, padding:18 }}>
-                      <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2, marginBottom:12 }}>▸ PROJEÇÃO ESCANTEIOS · PRÓXIMOS 10MIN</div>
+                    <div style={{ background:"#0d1117", border:`1px solid ${pred.isFastTrack ? "#f0c04066" : isStrong ? "#00e5a044" : "#1c2333"}`, borderRadius:10, padding:18 }}>
+                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                        <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2 }}>▸ PROJEÇÃO ESCANTEIOS · PRÓXIMOS 10MIN</div>
+                        <div style={{ display:"flex", gap:5 }}>
+                          {pred.isFastTrack && (
+                            <span style={{ fontFamily:"var(--mono)", fontSize:8, fontWeight:700, color:"#f0c040", background:"#f0c04022", padding:"2px 7px", borderRadius:3, border:"1px solid #f0c04055", animation:"pulse 1.5s infinite" }}>
+                              ⚡ FAST TRACK
+                            </span>
+                          )}
+                          <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", background:"#0a0f18", padding:"2px 7px", borderRadius:3 }}>
+                            MODO {pred.phase}
+                          </span>
+                        </div>
+                      </div>
                       <Ring value={pred.confidence} signal={pred.signal}/>
                       <div style={{ marginTop:14 }}>
                         <ProjectionBar value={pred.projected10}/>
@@ -485,7 +498,7 @@ export default function Home() {
                           border: isStrong ? "none" : `1px solid ${sc}44`,
                         }}>{pred.market.betRange}</div>
                         <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", marginTop:5 }}>
-                          ~{pred.projected10} proj · pressão {pred.pressureMult}× · {pred.totalCorners} esc até agora
+                          ~{pred.projected10} proj · pressão {pred.pressureMult}× · peso taxa {Math.round(pred.pesoReal*100)}%
                         </div>
 
                         {/* JANELA DE ENTRADA */}
