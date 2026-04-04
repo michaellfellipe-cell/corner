@@ -3,7 +3,8 @@ import Head from "next/head";
 import { projectCorners, generateDemoGame } from "../lib/predictor";
 
 const ALERT_THRESHOLD = 70;
-const RED_THRESHOLD = 80;
+const RED_THRESHOLD   = 80;
+const BLOCK_ALERTS    = 82;  // após esse minuto não dispara alerta
 const confColor = (c) => c >= RED_THRESHOLD ? "#ff4560" : c >= ALERT_THRESHOLD ? "#00e5a0" : c >= 50 ? "#f0c040" : "#3d4f6b";
 
 const sigColor = s => s === "STRONG" ? "#ff4560" : s === "MODERATE" ? "#f0c040" : "#3d4f6b";
@@ -151,10 +152,11 @@ function GameCard({ game, onSelect, isSelected }) {
 
   const pred = projectCorners(game);
   const conf = pred.confidence;
-  const isRed   = conf >= RED_THRESHOLD;    // 80%+ vermelho
-  const isGreen = conf >= ALERT_THRESHOLD;  // 70-79% verde
-  const sc = confColor(conf);
-  const borderColor = isSelected ? sc : sc;
+  const isTooLate = pred.entryWindow.isTooLate;
+  const isRed   = conf >= RED_THRESHOLD  && !isTooLate;
+  const isGreen = conf >= ALERT_THRESHOLD && !isTooLate;
+  // Se tarde demais → cinza independente da confiança
+  const sc = isTooLate ? "#3d4f6b" : confColor(conf);
 
   return (
     <div onClick={() => onSelect(game)} style={{
@@ -186,14 +188,16 @@ function GameCard({ game, onSelect, isSelected }) {
           ESC {game.corners?.home??0}–{game.corners?.away??0} · CRZ {(game.crosses?.home??0)+(game.crosses?.away??0)}
         </span>
         <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+          <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b" }}>{pred.phase}</span>
           <span style={{ fontFamily:"var(--mono)", fontSize:9, color:"#4a6070" }}>~{pred.projected10}/10m</span>
           <span style={{
             fontFamily:"var(--display)", fontWeight:700, fontSize:10, letterSpacing:1,
             color: (isRed || isGreen) ? "#080b10" : sc,
-            background: sc,
+            background: isTooLate ? "#1a2235" : sc,
             padding:"2px 7px", borderRadius:4,
+            opacity: isTooLate ? 0.5 : 1,
           }}>
-            {isRed ? `🔴 ${conf}%` : isGreen ? `✓ ${conf}%` : `${conf}%`}
+            {isTooLate ? `⏰ ${conf}%` : isRed ? `🔴 ${conf}%` : isGreen ? `✓ ${conf}%` : `${conf}%`}
           </span>
         </div>
       </div>
@@ -214,12 +218,14 @@ function AlertBanner({ alerts, onDismiss, soundOn, onToggleSound }) {
           <div key={a.id} onClick={a.onClick} style={{ flexShrink:0, display:"flex", alignItems:"center", gap:6,
             fontFamily:"var(--mono)", fontSize:9, background:"#00e5a00d", padding:"5px 10px",
             borderRadius:5, border:"1px solid #00e5a033", cursor:"pointer", whiteSpace:"nowrap" }}>
+            <span style={{ color:"#3d4f6b", fontSize:8 }}>{a.phase}</span>
             <span style={{ color:"#00e5a0", fontWeight:700 }}>{a.game}</span>
             <span style={{ color:"#3d4f6b" }}>·</span>
             <span style={{ color:"#f0c040" }}>{a.minute}'</span>
             <span style={{ color:"#3d4f6b" }}>·</span>
             <span style={{ color:"#c9d6e3" }}>{a.market}</span>
             <span style={{ background: a.confidence >= RED_THRESHOLD ? "#ff4560" : "#00e5a0", color:"#080b10", padding:"1px 5px", borderRadius:3, fontSize:8, fontWeight:700 }}>{a.confidence}%</span>
+            {a.minsLeft && <span style={{ color:"#f0c040", fontSize:8 }}>⏱~{a.minsLeft}min</span>}
           </div>
         ))}
       </div>
@@ -282,24 +288,30 @@ export default function Home() {
         return pb - pa;
       });
 
-      // Alertas somente para ≥ ALERT_THRESHOLD
+      // Alertas somente para ≥ ALERT_THRESHOLD E antes do limite de tempo
       let newAlertFired = false;
       list.forEach(g => {
         const pred = projectCorners(g);
-        if (pred.confidence >= ALERT_THRESHOLD && prevSigs.current[g.id] !== "ALERTED") {
+        const canAlert = pred.confidence >= ALERT_THRESHOLD
+          && !pred.entryWindow.isTooLate          // bloqueia após 82'
+          && prevSigs.current[g.id] !== "ALERTED";
+
+        if (canAlert) {
           setAlerts(a => [{
             id: `${g.id}-${Date.now()}`,
             game: `${g.homeShort || g.home.split(" ").pop()} × ${g.awayShort || g.away.split(" ").pop()}`,
             minute: g.minute,
             market: pred.market.betRange,
             confidence: pred.confidence,
+            phase: pred.phase,
+            minsLeft: pred.entryWindow.minsLeft,
             onClick: () => handleSelectRef.current(g),
           }, ...a].slice(0, 5));
           setAlertsVisible(true);
           newAlertFired = true;
         }
         if (pred.confidence >= ALERT_THRESHOLD) prevSigs.current[g.id] = "ALERTED";
-        else if (pred.confidence < 70) prevSigs.current[g.id] = "reset";
+        else if (pred.confidence < 65) prevSigs.current[g.id] = "reset";
       });
 
       // Toca som de dinheiro quando um novo alerta aparecer
@@ -475,6 +487,35 @@ export default function Home() {
                         <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", marginTop:5 }}>
                           ~{pred.projected10} proj · pressão {pred.pressureMult}× · {pred.totalCorners} esc até agora
                         </div>
+
+                        {/* JANELA DE ENTRADA */}
+                        {(() => {
+                          const w = pred.entryWindow;
+                          const wColor = w.urgency === "blocked" ? "#3d4f6b"
+                            : w.urgency === "good"    ? "#00e5a0"
+                            : w.urgency === "warning" ? "#f0c040"
+                            : "#ff4560";
+                          const wBg = w.urgency === "blocked" ? "#1a2235"
+                            : w.urgency === "good"    ? "#00e5a011"
+                            : w.urgency === "warning" ? "#f0c04015"
+                            : "#ff456015";
+                          const wIcon = w.urgency === "blocked" ? "🚫"
+                            : w.urgency === "good"    ? "✅"
+                            : w.urgency === "warning" ? "⚠️"
+                            : "⏰";
+                          return (
+                            <div style={{ marginTop:10, background:wBg, border:`1px solid ${wColor}44`, borderRadius:6, padding:"7px 12px", display:"inline-flex", alignItems:"center", gap:6 }}>
+                              <span style={{ fontSize:13 }}>{wIcon}</span>
+                              <div style={{ textAlign:"left" }}>
+                                <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:1 }}>JANELA DE ENTRADA</div>
+                                <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:14, color:wColor }}>{w.label}</div>
+                              </div>
+                              <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", background:"#0a0f18", padding:"2px 6px", borderRadius:3, marginLeft:4 }}>
+                                MODO {pred.phase}
+                              </span>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
