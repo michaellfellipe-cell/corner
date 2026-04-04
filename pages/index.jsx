@@ -9,6 +9,60 @@ const confColor = (c) => c >= RED_THRESHOLD ? "#ff4560" : c >= ALERT_THRESHOLD ?
 const sigColor = s => s === "STRONG" ? "#ff4560" : s === "MODERATE" ? "#f0c040" : "#3d4f6b";
 const impactColor = i => i === "high" ? "#00e5a0" : i === "medium" ? "#f0c040" : "#4a6070";
 
+// ── Som de dinheiro via Web Audio API (sem arquivo externo) ───────────────────
+function playMoneySound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+
+    // Sequência de 4 moedas caindo com pitch crescente
+    const coins = [
+      { freq: 1200, time: 0.00, dur: 0.08 },
+      { freq: 1400, time: 0.10, dur: 0.08 },
+      { freq: 1600, time: 0.18, dur: 0.10 },
+      { freq: 1900, time: 0.28, dur: 0.14 },
+    ];
+
+    coins.forEach(({ freq, time, dur }) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const now  = ctx.currentTime + time;
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, now);
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.6, now + dur);
+
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(0.35, now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+      osc.start(now);
+      osc.stop(now + dur + 0.05);
+    });
+
+    // "Cling" final mais grave — som de notas caindo
+    const cash  = ctx.createOscillator();
+    const gCash = ctx.createGain();
+    cash.connect(gCash);
+    gCash.connect(ctx.destination);
+    cash.type = "triangle";
+    cash.frequency.setValueAtTime(800, ctx.currentTime + 0.42);
+    cash.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.70);
+    gCash.gain.setValueAtTime(0, ctx.currentTime + 0.42);
+    gCash.gain.linearRampToValueAtTime(0.25, ctx.currentTime + 0.44);
+    gCash.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.70);
+    cash.start(ctx.currentTime + 0.42);
+    cash.stop(ctx.currentTime + 0.75);
+
+    // Fecha contexto após o som terminar
+    setTimeout(() => ctx.close(), 1000);
+  } catch (e) {
+    // Browser bloqueou autoplay — silencia sem erro
+  }
+}
+
 function StatBar({ label, homeVal, awayVal, highlight }) {
   const hv = Number(homeVal) || 0, av = Number(awayVal) || 0;
   const total = hv + av;
@@ -147,8 +201,8 @@ function GameCard({ game, onSelect, isSelected }) {
   );
 }
 
-// ── AlertBanner — só ≥ 85% ───────────────────────────────────────────────────
-function AlertBanner({ alerts, onDismiss }) {
+// ── AlertBanner — só ≥ 70% ───────────────────────────────────────────────────
+function AlertBanner({ alerts, onDismiss, soundOn, onToggleSound }) {
   if (!alerts.length) return null;
   return (
     <div style={{ background:"#051209", borderBottom:"1px solid #00e5a044", padding:"0 16px", display:"flex", alignItems:"center", gap:0, minHeight:42 }}>
@@ -169,6 +223,16 @@ function AlertBanner({ alerts, onDismiss }) {
           </div>
         ))}
       </div>
+      {/* Toggle de som */}
+      <button onClick={onToggleSound} title={soundOn ? "Silenciar alertas" : "Ativar som"} style={{
+        flexShrink:0, background: soundOn ? "#00e5a011" : "#1a2235",
+        border:`1px solid ${soundOn ? "#00e5a033" : "#2a3a50"}`,
+        borderRadius:4, color: soundOn ? "#00e5a0" : "#3d4f6b",
+        cursor:"pointer", fontSize:13, padding:"2px 8px", marginLeft:6,
+        transition:"all .2s",
+      }}>
+        {soundOn ? "🔊" : "🔇"}
+      </button>
       <button onClick={onDismiss} style={{ flexShrink:0, background:"none", border:"none", color:"#3d4f6b", cursor:"pointer", fontSize:14, padding:"0 8px" }}>✕</button>
     </div>
   );
@@ -182,6 +246,8 @@ export default function Home() {
   const [prediction, setPrediction] = useState(null);
   const [alerts, setAlerts]         = useState([]);
   const [alertsVisible, setAlertsVisible] = useState(true);
+  const [soundOn, setSoundOn]       = useState(true);
+  const soundOnRef = useRef(true);
   const [loading, setLoading]       = useState(true);
   const [isDemo, setIsDemo]         = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
@@ -217,6 +283,7 @@ export default function Home() {
       });
 
       // Alertas somente para ≥ ALERT_THRESHOLD
+      let newAlertFired = false;
       list.forEach(g => {
         const pred = projectCorners(g);
         if (pred.confidence >= ALERT_THRESHOLD && prevSigs.current[g.id] !== "ALERTED") {
@@ -229,10 +296,14 @@ export default function Home() {
             onClick: () => handleSelectRef.current(g),
           }, ...a].slice(0, 5));
           setAlertsVisible(true);
+          newAlertFired = true;
         }
         if (pred.confidence >= ALERT_THRESHOLD) prevSigs.current[g.id] = "ALERTED";
         else if (pred.confidence < 70) prevSigs.current[g.id] = "reset";
       });
+
+      // Toca som de dinheiro quando um novo alerta aparecer
+      if (newAlertFired && soundOnRef.current) playMoneySound();
 
       setGames(list);
       setUpcoming(upList);
@@ -290,7 +361,7 @@ export default function Home() {
             <div style={{ width:28, height:28, background:"#00e5a0", borderRadius:6, display:"flex", alignItems:"center", justifyContent:"center", fontSize:15 }}>⚽</div>
             <div>
               <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:17, letterSpacing:2 }}>CORNER<span style={{ color:"#00e5a0" }}>EDGE</span></div>
-              <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2 }}>ESPN · 53 LIGAS · ANÁLISE BILATERAL</div>
+              <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2 }}>ESPN · 110+ LIGAS · ANÁLISE BILATERAL</div>
             </div>
           </div>
           <div style={{ display:"flex", alignItems:"center", gap:14 }}>
@@ -311,7 +382,16 @@ export default function Home() {
         </header>
 
         {/* Alerts */}
-        {alertsVisible && <AlertBanner alerts={alerts} onDismiss={() => setAlertsVisible(false)}/>}
+        {alertsVisible && <AlertBanner
+          alerts={alerts}
+          onDismiss={() => setAlertsVisible(false)}
+          soundOn={soundOn}
+          onToggleSound={() => {
+            const next = !soundOn;
+            setSoundOn(next);
+            soundOnRef.current = next;
+          }}
+        />}
 
         <div style={{ display:"flex", maxWidth:1280, margin:"0 auto", padding:14, gap:14 }}>
 

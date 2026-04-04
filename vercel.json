@@ -3,5 +3,10 @@
   "buildCommand": "next build",
   "devCommand": "next dev",
   "installCommand": "npm install",
-  "regions": ["gru1"]
+  "regions": ["gru1"],
+  "functions": {
+    "pages/api/games.js": {
+      "maxDuration": 30
+    }
+  }
 }
