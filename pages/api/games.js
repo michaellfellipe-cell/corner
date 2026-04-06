@@ -21,8 +21,6 @@
  * Fallback: ESPN (sem APIFOOTBALL_KEY)
  */
 
-// ── Fallback ESPN (mantido para quando não há chave AF) ───────────────────────
-import ESPN_LEAGUES from "./espnLeagues.js";
 
 // ── Imports API-Football ──────────────────────────────────────────────────────
 import {
