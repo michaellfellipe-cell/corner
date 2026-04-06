@@ -1,546 +1,457 @@
 /**
- * /pages/api/games.js — ESPN API, cobertura máxima de ligas e copas
- * Fase 1: scoreboard de todas as competições em paralelo
- * Fase 2: summary de cada jogo ao vivo para stats detalhadas
+ * pages/api/games.js — v3 (AF-Primary Architecture)
+ *
+ * NOVA ARQUITETURA:
+ *   Antes: ESPN (134 req) → AF enrichment (N req)  [dados ESPN incompletos]
+ *   Agora: AF live=all (1 req) → AF statistics (N req) [dados completos]
+ *
+ * Vantagens:
+ *   - Cruzamentos SEMPRE disponíveis (AF fornece para todas as ligas)
+ *   - Ataques perigosos SEMPRE reais
+ *   - Shots Inside Box SEMPRE disponível
+ *   - 134 requests ESPN → 1 request AF
+ *   - Eventos (subs, gols, cartões) inline no mesmo request
+ *   - 1.200+ ligas vs 134 ESPN
+ *
+ * Quota estimada (AF Pro 7.500/dia):
+ *   - 1 req/30s (live list): 2/min = 120/hora
+ *   - N req/90s (stats, cache): ~5/min = 300/hora
+ *   - Total: ~420/hora = ~5.000/dia ✅
+ *
+ * Fallback: ESPN (sem APIFOOTBALL_KEY)
  */
 
-const LEAGUES = [
-  // ── INGLATERRA ────────────────────────────────────────────────────────────
-  { id: "eng.1",            name: "Premier League",        country: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
-  { id: "eng.2",            name: "Championship",          country: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
-  { id: "eng.3",            name: "League One",            country: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
-  { id: "eng.4",            name: "League Two",            country: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
-  { id: "eng.fa",           name: "FA Cup",                country: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
-  { id: "eng.league_cup",   name: "EFL Cup",               country: "🏴󠁧󠁢󠁥󠁮󠁧󠁿" },
+// ── Fallback ESPN (mantido para quando não há chave AF) ───────────────────────
+import ESPN_LEAGUES from "./espnLeagues.js";
 
-  // ── ESPANHA ───────────────────────────────────────────────────────────────
-  { id: "esp.1",            name: "La Liga",               country: "🇪🇸" },
-  { id: "esp.2",            name: "La Liga 2",             country: "🇪🇸" },
-  { id: "esp.copa_del_rey", name: "Copa del Rey",          country: "🇪🇸" },
-
-  // ── ALEMANHA ──────────────────────────────────────────────────────────────
-  { id: "ger.1",            name: "Bundesliga",            country: "🇩🇪" },
-  { id: "ger.2",            name: "2. Bundesliga",         country: "🇩🇪" },
-  { id: "ger.3",            name: "3. Liga",               country: "🇩🇪" },
-  { id: "ger.dfb_pokal",    name: "DFB Pokal",             country: "🇩🇪" },
-
-  // ── ITÁLIA ────────────────────────────────────────────────────────────────
-  { id: "ita.1",            name: "Serie A",               country: "🇮🇹" },
-  { id: "ita.2",            name: "Serie B",               country: "🇮🇹" },
-  { id: "ita.coppa_italia", name: "Coppa Italia",          country: "🇮🇹" },
-
-  // ── FRANÇA ────────────────────────────────────────────────────────────────
-  { id: "fra.1",            name: "Ligue 1",               country: "🇫🇷" },
-  { id: "fra.2",            name: "Ligue 2",               country: "🇫🇷" },
-  { id: "fra.coupe_de_france", name: "Coupe de France",   country: "🇫🇷" },
-
-  // ── PORTUGAL ─────────────────────────────────────────────────────────────
-  { id: "por.1",            name: "Primeira Liga",         country: "🇵🇹" },
-  { id: "por.2",            name: "Liga Portugal 2",       country: "🇵🇹" },
-  { id: "por.cup",          name: "Taça de Portugal",      country: "🇵🇹" },
-
-  // ── HOLANDA ───────────────────────────────────────────────────────────────
-  { id: "ned.1",            name: "Eredivisie",            country: "🇳🇱" },
-  { id: "ned.2",            name: "Eerste Divisie",        country: "🇳🇱" },
-  { id: "ned.cup",          name: "KNVB Beker",            country: "🇳🇱" },
-
-  // ── BÉLGICA ───────────────────────────────────────────────────────────────
-  { id: "bel.1",            name: "Pro League",            country: "🇧🇪" },
-  { id: "bel.cup",          name: "Belgian Cup",           country: "🇧🇪" },
-
-  // ── TURQUIA ───────────────────────────────────────────────────────────────
-  { id: "tur.1",            name: "Süper Lig",             country: "🇹🇷" },
-  { id: "tur.2",            name: "TFF First League",      country: "🇹🇷" },
-
-  // ── ESCÓCIA ───────────────────────────────────────────────────────────────
-  { id: "sco.1",            name: "Scottish Prem",         country: "🏴󠁧󠁢󠁳󠁣󠁴󠁿" },
-  { id: "sco.2",            name: "Scottish Championship", country: "🏴󠁧󠁢󠁳󠁣󠁴󠁿" },
-  { id: "sco.fa",           name: "Scottish FA Cup",       country: "🏴󠁧󠁢󠁳󠁣󠁴󠁿" },
-
-  // ── GRÉCIA ────────────────────────────────────────────────────────────────
-  { id: "gre.1",            name: "Super League GR",       country: "🇬🇷" },
-  { id: "gre.cup",          name: "Greek Cup",             country: "🇬🇷" },
-
-  // ── ÁUSTRIA ───────────────────────────────────────────────────────────────
-  { id: "aut.1",            name: "Bundesliga AT",         country: "🇦🇹" },
-  { id: "aut.cup",          name: "Austrian Cup",          country: "🇦🇹" },
-
-  // ── SUÍÇA ─────────────────────────────────────────────────────────────────
-  { id: "sui.1",            name: "Super League CH",       country: "🇨🇭" },
-
-  // ── ESCANDINÁVIA ──────────────────────────────────────────────────────────
-  { id: "den.1",            name: "Superliga DK",          country: "🇩🇰" },
-  { id: "swe.1",            name: "Allsvenskan",           country: "🇸🇪" },
-  { id: "nor.1",            name: "Eliteserien",           country: "🇳🇴" },
-  { id: "fin.1",            name: "Veikkausliiga",         country: "🇫🇮" },
-
-  // ── LESTE EUROPEU ─────────────────────────────────────────────────────────
-  { id: "pol.1",            name: "Ekstraklasa",           country: "🇵🇱" },
-  { id: "rou.1",            name: "Liga I",                country: "🇷🇴" },
-  { id: "rus.1",            name: "Premier League RU",     country: "🇷🇺" },
-  { id: "ukr.1",            name: "Premier League UA",     country: "🇺🇦" },
-  { id: "cze.1",            name: "Fortuna Liga",          country: "🇨🇿" },
-  { id: "svk.1",            name: "Slovak Super Liga",     country: "🇸🇰" },
-  { id: "hun.1",            name: "OTP Bank Liga",         country: "🇭🇺" },
-  { id: "bul.1",            name: "Parva Liga",            country: "🇧🇬" },
-  { id: "srb.1",            name: "SuperLiga RS",          country: "🇷🇸" },
-  { id: "hrv.1",            name: "HNL Croatia",           country: "🇭🇷" },
-  { id: "svn.1",            name: "PrvaLiga SLO",          country: "🇸🇮" },
-  { id: "blr.1",            name: "Vysheyshaya Liga",      country: "🇧🇾" },
-  { id: "kaz.1",            name: "Premier League KZ",     country: "🇰🇿" },
-
-  // ── BALCÃS/MEDITERRÂNEO ───────────────────────────────────────────────────
-  { id: "isr.1",            name: "Ligat Ha'Al",           country: "🇮🇱" },
-  { id: "cyp.1",            name: "Cyprus First Div",      country: "🇨🇾" },
-
-  // ── UEFA / FIFA ───────────────────────────────────────────────────────────
-  { id: "uefa.champions",      name: "Champions League",   country: "⭐" },
-  { id: "uefa.europa",         name: "Europa League",      country: "🟠" },
-  { id: "uefa.europa.conf",    name: "Conference League",  country: "🟢" },
-  { id: "uefa.nations",        name: "Nations League",     country: "🌍" },
-  { id: "fifa.worldq.conmebol",name: "Eliminatórias SUL",  country: "🌎" },
-  { id: "fifa.worldq.uefa",    name: "Eliminatórias UEFA", country: "🌍" },
-  { id: "fifa.worldq.concacaf",name: "Eliminatórias CONC", country: "🌎" },
-  { id: "fifa.worldq.afc",     name: "Eliminatórias AFC",  country: "🌏" },
-  { id: "fifa.worldq.caf",     name: "Eliminatórias CAF",  country: "🌍" },
-
-  // ── BRASIL ────────────────────────────────────────────────────────────────
-  { id: "bra.1",            name: "Brasileirão Série A",   country: "🇧🇷" },
-  { id: "bra.2",            name: "Brasileirão Série B",   country: "🇧🇷" },
-  { id: "bra.3",            name: "Brasileirão Série C",   country: "🇧🇷" },
-  { id: "bra.4",            name: "Brasileirão Série D",   country: "🇧🇷" },
-  { id: "bra.copa_brasil",  name: "Copa do Brasil",        country: "🇧🇷" },
-  { id: "bra.paulista",     name: "Paulistão",             country: "🇧🇷" },
-  { id: "bra.carioca",      name: "Carioca",               country: "🇧🇷" },
-  { id: "bra.gaucho",       name: "Gauchão",               country: "🇧🇷" },
-  { id: "bra.mineiro",      name: "Mineiro",               country: "🇧🇷" },
-  { id: "bra.baiano",       name: "Baiano",                country: "🇧🇷" },
-  { id: "bra.cearense",     name: "Cearense",              country: "🇧🇷" },
-  { id: "bra.nordeste",     name: "Copa do Nordeste",      country: "🇧🇷" },
-  { id: "bra.verde_amarela",name: "Copa Verde",            country: "🇧🇷" },
-
-  // ── ARGENTINA ─────────────────────────────────────────────────────────────
-  { id: "arg.1",            name: "Liga Profesional AR",   country: "🇦🇷" },
-  { id: "arg.2",            name: "Primera Nacional AR",   country: "🇦🇷" },
-  { id: "arg.copa",         name: "Copa Argentina",        country: "🇦🇷" },
-
-  // ── MÉXICO ────────────────────────────────────────────────────────────────
-  { id: "mex.1",            name: "Liga MX",               country: "🇲🇽" },
-  { id: "mex.2",            name: "Expansión MX",          country: "🇲🇽" },
-  { id: "mex.copa",         name: "Copa MX",               country: "🇲🇽" },
-
-  // ── EUA ───────────────────────────────────────────────────────────────────
-  { id: "usa.1",            name: "MLS",                   country: "🇺🇸" },
-  { id: "usa.2",            name: "USL Championship",      country: "🇺🇸" },
-  { id: "usa.open",         name: "US Open Cup",           country: "🇺🇸" },
-
-  // ── DEMAIS AMÉRICAS ───────────────────────────────────────────────────────
-  { id: "col.1",            name: "Liga BetPlay CO",       country: "🇨🇴" },
-  { id: "col.2",            name: "Torneo Betplay CO",     country: "🇨🇴" },
-  { id: "chi.1",            name: "Primera División CL",   country: "🇨🇱" },
-  { id: "ecu.1",            name: "LigaPro Ecuador",       country: "🇪🇨" },
-  { id: "per.1",            name: "Liga 1 Perú",           country: "🇵🇪" },
-  { id: "uru.1",            name: "Primera División UY",   country: "🇺🇾" },
-  { id: "ven.1",            name: "Liga FUTVE",            country: "🇻🇪" },
-  { id: "bol.1",            name: "División Prof. BO",     country: "🇧🇴" },
-  { id: "par.1",            name: "División Prof. PY",     country: "🇵🇾" },
-  { id: "crc.1",            name: "Primera CR",            country: "🇨🇷" },
-  { id: "gua.1",            name: "Liga Nacional GT",      country: "🇬🇹" },
-  { id: "hon.1",            name: "Liga Nacional HN",      country: "🇭🇳" },
-  { id: "slv.1",            name: "Liga Mayor SV",         country: "🇸🇻" },
-  { id: "can.1",            name: "Canadian Premier",      country: "🇨🇦" },
-
-  // ── SUL-AMERICANA / CONCACAF ──────────────────────────────────────────────
-  { id: "conmebol.libertadores",  name: "Libertadores",    country: "🏆" },
-  { id: "conmebol.sudamericana",  name: "Sul-Americana",   country: "🏆" },
-  { id: "conmebol.recopa",        name: "Recopa Sudamer.", country: "🏆" },
-  { id: "concacaf.champions",     name: "CONCACAF CL",     country: "🌎" },
-  { id: "concacaf.league",        name: "CONCACAF League", country: "🌎" },
-
-  // ── ÁSIA ─────────────────────────────────────────────────────────────────
-  { id: "afc.champions",    name: "AFC Champions",         country: "🌏" },
-  { id: "jpn.1",            name: "J1 League",             country: "🇯🇵" },
-  { id: "jpn.2",            name: "J2 League",             country: "🇯🇵" },
-  { id: "jpn.emperor_cup",  name: "Emperor's Cup",         country: "🇯🇵" },
-  { id: "kor.1",            name: "K League 1",            country: "🇰🇷" },
-  { id: "kor.2",            name: "K League 2",            country: "🇰🇷" },
-  { id: "kor.fa",           name: "Korean FA Cup",         country: "🇰🇷" },
-  { id: "chn.1",            name: "Chinese Super League",  country: "🇨🇳" },
-  { id: "chn.2",            name: "Chinese League One",    country: "🇨🇳" },
-  { id: "sau.1",            name: "Saudi Pro League",      country: "🇸🇦" },
-  { id: "uae.pro",          name: "UAE Pro League",        country: "🇦🇪" },
-  { id: "qat.1",            name: "Qatar Stars League",    country: "🇶🇦" },
-  { id: "irn.1",            name: "Iran Pro League",       country: "🇮🇷" },
-  { id: "ind.1",            name: "Indian Super League",   country: "🇮🇳" },
-  { id: "thi.1",            name: "Thai League 1",         country: "🇹🇭" },
-  { id: "mly.1",            name: "Malaysia Super League", country: "🇲🇾" },
-  { id: "idn.1",            name: "Liga 1 Indonesia",      country: "🇮🇩" },
-  { id: "vnm.1",            name: "Vietnam League 1",      country: "🇻🇳" },
-  { id: "aus.1",            name: "A-League",              country: "🇦🇺" },
-
-  // ── ÁFRICA ────────────────────────────────────────────────────────────────
-  { id: "caf.champions",    name: "CAF Champions League",  country: "🌍" },
-  { id: "caf.confederation",name: "CAF Confed. Cup",       country: "🌍" },
-  { id: "egy.1",            name: "Egyptian Premier",      country: "🇪🇬" },
-  { id: "mor.1",            name: "Botola Pro (Marrocos)", country: "🇲🇦" },
-  { id: "tun.1",            name: "Ligue 1 Tunísia",      country: "🇹🇳" },
-  { id: "alg.1",            name: "Ligue 1 Argélia",      country: "🇩🇿" },
-  { id: "rsa.1",            name: "South African PSL",     country: "🇿🇦" },
-  { id: "nig.1",            name: "Nigerian Pro League",   country: "🇳🇬" },
-  { id: "gha.1",            name: "Ghana Premier League",  country: "🇬🇭" },
-];
-
-const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer";
-const HEADERS = {
-  "Accept": "application/json",
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-};
-
-function isLive(e) {
-  const state = (e?.status?.type?.state || "").toLowerCase();
-  const name  = (e?.status?.type?.name  || "").toLowerCase();
-  return state === "in" || state === "halftime" ||
-         name.includes("inprogress") || name.includes("halftime");
-}
-
-function isUpcoming(e) {
-  return (e?.status?.type?.state || "").toLowerCase() === "pre";
-}
-
-function extractMinute(event) {
-  const display  = event.status?.displayClock || "";
-  const rawClock = event.status?.clock ?? 0;
-  const period   = event.status?.period || 1;
-  const base  = display.match(/^(\d+)/)?.[1];
-  const extra = display.match(/\+(\d+)/)?.[1];
-  if (base) return parseInt(base) + (extra ? parseInt(extra) : 0);
-  if (rawClock > 0) return period === 1
-    ? Math.round(rawClock / 60)
-    : 45 + Math.round(rawClock / 60);
-  return period === 2 ? 55 : 25;
-}
-
-async function fetchGameSummary(leagueId, eventId) {
-  try {
-    const res = await fetch(
-      `${ESPN_BASE}/${leagueId}/summary?event=${eventId}`,
-      { headers: HEADERS, signal: AbortSignal.timeout(5000) }
-    );
-    if (!res.ok) return null;
-    return await res.json();
-  } catch { return null; }
-}
-
-function parseSummaryStats(summary) {
-  const teams = summary?.boxscore?.teams || [];
-  const result = { home: {}, away: {} };
-  for (const teamData of teams) {
-    const side = teamData.homeAway === "home" ? "home" : "away";
-    for (const s of (teamData.statistics || [])) {
-      const key = s.name || "";
-      const val = parseFloat(s.displayValue ?? s.value ?? "0");
-      if (!isNaN(val)) result[side][key] = val;
-    }
-  }
-  return result;
-}
-
-function getStat(parsed, side, ...keys) {
-  for (const k of keys) {
-    if (parsed[side][k] !== undefined) return parsed[side][k];
-  }
-  return undefined;
-}
-
-async function fetchLeague(league) {
-  try {
-    const res = await fetch(`${ESPN_BASE}/${league.id}/scoreboard`, {
-      headers: HEADERS, signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return { league, live: [], upcoming: [] };
-    const data   = await res.json();
-    const events = data.events || [];
-    return {
-      league,
-      live:     events.filter(isLive),
-      upcoming: events.filter(isUpcoming).map(e => normalizeGame(e, league, {home:{},away:{}}, true)),
-    };
-  } catch { return { league, live: [], upcoming: [] }; }
-}
-
-function normalizeGame(event, league, parsed, isUpcomingGame) {
-  const comp        = event.competitions?.[0] || {};
-  const competitors = comp.competitors || [];
-  const home        = competitors.find(c => c.homeAway === "home") || {};
-  const away        = competitors.find(c => c.homeAway === "away") || {};
-  const minute      = isUpcomingGame ? 0 : extractMinute(event);
-  const period      = event.status?.period || 1;
-
-  const posH = getStat(parsed, "home", "possessionPct") ?? 50;
-  const posA = getStat(parsed, "away", "possessionPct") ?? (100 - posH);
-  const shotsH  = getStat(parsed, "home", "totalShots")    ?? 0;
-  const shotsA  = getStat(parsed, "away", "totalShots")    ?? 0;
-  const onTgtH  = getStat(parsed, "home", "shotsOnTarget") ?? 0;
-  const onTgtA  = getStat(parsed, "away", "shotsOnTarget") ?? 0;
-  const cornH   = getStat(parsed, "home", "wonCorners")    ?? 0;
-  const cornA   = getStat(parsed, "away", "wonCorners")    ?? 0;
-  const foulsH  = getStat(parsed, "home", "foulsCommitted")   ?? 0;
-  const foulsA  = getStat(parsed, "away", "foulsCommitted")   ?? 0;
-  const yellowH = getStat(parsed, "home", "yellowCards")   ?? 0;
-  const yellowA = getStat(parsed, "away", "yellowCards")   ?? 0;
-  const savesH  = getStat(parsed, "home", "saves")         ?? 0;
-  const savesA  = getStat(parsed, "away", "saves")         ?? 0;
-  const offH    = getStat(parsed, "home", "offsides")      ?? 0;
-  const offA    = getStat(parsed, "away", "offsides")      ?? 0;
-  const crossH  = getStat(parsed, "home", "totalCrosses")  ?? 0;
-  const crossA  = getStat(parsed, "away", "totalCrosses")  ?? 0;
-  const passH   = getStat(parsed, "home", "totalPasses")   ?? 0;
-  const passA   = getStat(parsed, "away", "totalPasses")   ?? 0;
-  const accPH   = getStat(parsed, "home", "accuratePasses")  ?? 0;
-  const accPA   = getStat(parsed, "away", "accuratePasses")  ?? 0;
-  const longH   = getStat(parsed, "home", "totalLongBalls")  ?? 0;
-  const longA   = getStat(parsed, "away", "totalLongBalls")  ?? 0;
-  const blkH    = getStat(parsed, "home", "blockedShots")    ?? 0;
-  const blkA    = getStat(parsed, "away", "blockedShots")    ?? 0;
-  const clrH    = getStat(parsed, "home", "effectiveClearance","totalClearance") ?? 0;
-  const clrA    = getStat(parsed, "away", "effectiveClearance","totalClearance") ?? 0;
-  const daH     = getStat(parsed, "home", "dangerousAttacks") ?? Math.round(shotsH * 3.2 + (posH / 100) * 16);
-  const daA     = getStat(parsed, "away", "dangerousAttacks") ?? Math.round(shotsA * 3.2 + (posA / 100) * 16);
-
-  return {
-    id: event.id,
-    league: league.name, leagueCountry: league.country, leagueId: league.id,
-    home: home.team?.displayName || home.team?.shortDisplayName || "Home",
-    homeShort: home.team?.abbreviation || "HME",
-    away: away.team?.displayName  || away.team?.shortDisplayName  || "Away",
-    awayShort: away.team?.abbreviation || "AWY",
-    score:   { home: parseInt(home.score) || 0, away: parseInt(away.score) || 0 },
-    minute, period,
-    clock:        event.status?.displayClock || "",
-    startTime:    event.date || comp.date || null,
-    statusDetail: event.status?.type?.description || "",
-    isUpcoming: !!isUpcomingGame, isDemo: false,
-    possession:       { home: posH,  away: posA  },
-    shots:            { home: shotsH,away: shotsA },
-    onTarget:         { home: onTgtH,away: onTgtA },
-    corners:          { home: cornH, away: cornA  },
-    fouls:            { home: foulsH,away: foulsA },
-    yellowCards:      { home: yellowH, away: yellowA },
-    dangerousAttacks: { home: daH,   away: daA   },
-    saves:            { home: savesH,away: savesA },
-    offsides:         { home: offH,  away: offA  },
-    crosses:          { home: crossH,away: crossA },
-    passes:           { home: passH, away: passA  },
-    accuratePasses:   { home: accPH, away: accPA  },
-    longBalls:        { home: longH, away: longA  },
-    blockedShots:     { home: blkH,  away: blkA  },
-    clearances:       { home: clrH,  away: clrA  },
-    pressureIndex: null,
-    venue: comp.venue?.fullName || null,
-  };
-}
-
-// ── API-Football enrichment (opcional — ativa quando APIFOOTBALL_KEY está set) ──
+// ── Imports API-Football ──────────────────────────────────────────────────────
 import {
   getLiveFixtures, getFixtureStats, getFixtureEvents, getLineups,
-  getTeamCornerHistory, getH2H, getLiveOdds, searchTeam,
-  matchAFFixture, parseStats, parseSubstitutions, parseCornersAvg,
+  getTeamCornerHistory, getH2H, getLiveOdds,
+  parseStats, parseSubstitutions, parseCornersAvg,
   parseH2HCorners, parseFormations, parseLiveCornerOdds,
   detectOffensiveSubs, formationAttackScore,
 } from "../../lib/apifootball.js";
 
-// Cache de IDs de times (team name → AF team ID)
-const teamIdCache = new Map();
+// ── Cache in-memory ───────────────────────────────────────────────────────────
+const _cache = new Map();
+const cacheGet = (k, ttl) => {
+  const v = _cache.get(k);
+  if (!v || Date.now() > v.exp) { _cache.delete(k); return null; }
+  return v.data;
+};
+const cacheSet = (k, data, ttl) => _cache.set(k, { data, exp: Date.now() + ttl });
 
-async function findTeamId(teamName) {
-  const key = teamName.toLowerCase();
-  if (teamIdCache.has(key)) return teamIdCache.get(key);
-  const res = await searchTeam(teamName).catch(() => null);
-  if (res && res[0]) {
-    const id = res[0].team?.id;
-    if (id) { teamIdCache.set(key, id); return id; }
-  }
-  return null;
+// ── Mapa de bandeiras por país ────────────────────────────────────────────────
+const FLAGS = {
+  "England":"🏴󠁧󠁢󠁥󠁮󠁧󠁿","Scotland":"🏴󠁧󠁢󠁳󠁣󠁴󠁿","Wales":"🏴󠁧󠁢󠁷󠁬󠁳󠁿",
+  "Spain":"🇪🇸","Germany":"🇩🇪","Italy":"🇮🇹","France":"🇫🇷",
+  "Portugal":"🇵🇹","Netherlands":"🇳🇱","Belgium":"🇧🇪","Turkey":"🇹🇷",
+  "Brazil":"🇧🇷","Argentina":"🇦🇷","Mexico":"🇲🇽","Colombia":"🇨🇴",
+  "Chile":"🇨🇱","Uruguay":"🇺🇾","Peru":"🇵🇪","Ecuador":"🇪🇨",
+  "USA":"🇺🇸","Canada":"🇨🇦","Australia":"🇦🇺","Japan":"🇯🇵",
+  "South Korea":"🇰🇷","China":"🇨🇳","India":"🇮🇳",
+  "Russia":"🇷🇺","Ukraine":"🇺🇦","Poland":"🇵🇱","Czech Republic":"🇨🇿",
+  "Romania":"🇷🇴","Greece":"🇬🇷","Croatia":"🇭🇷","Serbia":"🇷🇸",
+  "Sweden":"🇸🇪","Norway":"🇳🇴","Denmark":"🇩🇰","Finland":"🇫🇮",
+  "Switzerland":"🇨🇭","Austria":"🇦🇹","Hungary":"🇭🇺","Slovakia":"🇸🇰",
+  "Bulgaria":"🇧🇬","Israel":"🇮🇱","Saudi Arabia":"🇸🇦","UAE":"🇦🇪",
+  "Egypt":"🇪🇬","Nigeria":"🇳🇬","South Africa":"🇿🇦","Morocco":"🇲🇦",
+  "Ghana":"🇬🇭","Ivory Coast":"🇨🇮","Cameroon":"🇨🇲",
+  "Paraguay":"🇵🇾","Bolivia":"🇧🇴","Venezuela":"🇻🇪",
+  "Guatemala":"🇬🇹","Honduras":"🇭🇳","Costa Rica":"🇨🇷",
+  "Panama":"🇵🇦","Jamaica":"🇯🇲","Trinidad And Tobago":"🇹🇹",
+  "Malta":"🇲🇹","Cyprus":"🇨🇾","Ireland":"🇮🇪",
+  "World":"🌍","Europe":"🌍",
+};
+const flag = (country) => FLAGS[country] || "🏳️";
+
+// ── Normaliza status AF → formato interno ─────────────────────────────────────
+function parseAFStatus(fixture) {
+  const s = fixture.status?.short;
+  const elapsed = fixture.status?.elapsed || 0;
+  const extra   = fixture.status?.extra   || 0;
+
+  const LIVE_STATUSES  = ["1H","2H","ET","P","BT","INT"];
+  const HT_STATUSES    = ["HT"];
+  const PRE_STATUSES   = ["NS","TBD","PST","CANC","ABD","WO"];
+  const DONE_STATUSES  = ["FT","AET","PEN","AWD"];
+
+  if (DONE_STATUSES.includes(s))  return { type: "done",     minute: elapsed, period: elapsed > 45 ? 2 : 1 };
+  if (HT_STATUSES.includes(s))    return { type: "halftime", minute: 45,      period: 1 };
+  if (LIVE_STATUSES.includes(s))  return { type: "live",     minute: elapsed + extra, period: s === "2H" || s === "ET" ? 2 : 1 };
+  return                                  { type: "upcoming", minute: 0,       period: 0 };
 }
 
-async function enrichWithAF(game, afLiveFixtures) {
+// ── Extrai stats do array AF → objeto normalizado ─────────────────────────────
+function extractStat(statsArr, teamIdx, type) {
+  const v = statsArr?.[teamIdx]?.statistics?.find(s => s.type === type)?.value;
+  if (v === null || v === undefined) return null;
+  if (typeof v === "string" && v.endsWith("%")) return parseFloat(v) || 0;
+  return parseInt(v) || 0;
+}
+
+function buildGameStats(statsArr) {
+  if (!statsArr || !Array.isArray(statsArr) || statsArr.length < 2) return null;
+  const s = (idx, type) => extractStat(statsArr, idx, type);
+
+  return {
+    corners:       { home: s(0,"Corner Kicks")    ?? 0, away: s(1,"Corner Kicks")    ?? 0 },
+    shotsInsideBox:{ home: s(0,"Shots insidebox") ?? null, away: s(1,"Shots insidebox") ?? null },
+    shotsOutsideBox:{ home: s(0,"Shots outsidebox") ?? null, away: s(1,"Shots outsidebox") ?? null },
+    shots:         { home: s(0,"Total Shots")     ?? 0, away: s(1,"Total Shots")     ?? 0 },
+    onTarget:      { home: s(0,"Shots on Goal")   ?? 0, away: s(1,"Shots on Goal")   ?? 0 },
+    blockedShots:  { home: s(0,"Blocked Shots")   ?? 0, away: s(1,"Blocked Shots")   ?? 0 },
+    possession:    { home: s(0,"Ball Possession") ?? 50, away: s(1,"Ball Possession") ?? 50 },
+    dangerousAttacks: { home: s(0,"Dangerous Attacks") ?? 0, away: s(1,"Dangerous Attacks") ?? 0 },
+    attacks:       { home: s(0,"Attacks")         ?? 0, away: s(1,"Attacks")         ?? 0 },
+    fouls:         { home: s(0,"Fouls")           ?? 0, away: s(1,"Fouls")           ?? 0 },
+    yellowCards:   { home: s(0,"Yellow Cards")    ?? 0, away: s(1,"Yellow Cards")    ?? 0 },
+    saves:         { home: s(0,"Saves")           ?? 0, away: s(1,"Saves")           ?? 0 },
+    offsides:      { home: s(0,"Offsides")        ?? 0, away: s(1,"Offsides")        ?? 0 },
+    passes:        { home: s(0,"Total passes")    ?? 0, away: s(1,"Total passes")    ?? 0 },
+    accuratePasses:{ home: s(0,"Passes accurate") ?? 0, away: s(1,"Passes accurate") ?? 0 },
+    crosses:       { home: s(0,"Total Crosses")   ?? null, away: s(1,"Total Crosses") ?? null },
+    dangerousAttacksReal: true,  // AF = sempre real
+  };
+}
+
+// ── Extrai eventos inline do fixture AF ───────────────────────────────────────
+function buildEventsFromFixture(events) {
+  if (!Array.isArray(events)) return { substitutions: [], yellowCards: { home:0, away:0 }, redCards: { home:0, away:0 }, goalEvents: [] };
+
+  const substitutions = events
+    .filter(e => e.type === "subst")
+    .map(e => ({
+      minute:    e.time?.elapsed || 0,
+      extra:     e.time?.extra   || 0,
+      teamName:  e.team?.name    || "",
+      teamId:    e.team?.id      || 0,
+      playerIn:  e.player?.name  || "",
+      playerOut: e.assist?.name  || "",
+    }));
+
+  const teamGoals = {};
+  events.filter(e => e.type === "Goal" && !e.detail?.includes("Missed")).forEach(e => {
+    const id = e.team?.id;
+    if (id) teamGoals[id] = (teamGoals[id] || 0) + 1;
+  });
+
+  const yellowCards = { home: 0, away: 0 };
+  const redCards    = { home: 0, away: 0 };
+  // We don't have home/away team ID context here, so count from team IDs later
+
+  return { substitutions, goalEvents: events.filter(e => e.type === "Goal") };
+}
+
+// ── Normaliza um fixture AF → formato do jogo interno ─────────────────────────
+function normalizeAFGame(fix, stats, lineups, isUpcoming = false) {
+  const homeId   = fix.teams?.home?.id;
+  const awayId   = fix.teams?.away?.id;
+  const status   = parseAFStatus(fix.fixture);
+  const events   = fix.events || [];
+  const { substitutions, goalEvents } = buildEventsFromFixture(events);
+
+  // Cartões por time usando o ID dos times
+  const yellowCards = {
+    home: events.filter(e => e.type === "Card" && e.detail?.includes("Yellow") && e.team?.id === homeId).length,
+    away: events.filter(e => e.type === "Card" && e.detail?.includes("Yellow") && e.team?.id === awayId).length,
+  };
+  const redCards = {
+    home: events.filter(e => e.type === "Card" && (e.detail?.includes("Red") || e.detail?.includes("red")) && e.team?.id === homeId).length,
+    away: events.filter(e => e.type === "Card" && (e.detail?.includes("Red") || e.detail?.includes("red")) && e.team?.id === awayId).length,
+  };
+
+  const gameStats   = stats ? buildGameStats(stats) : null;
+  const formations  = lineups ? parseFormations(lineups) : null;
+
+  const homeShort = fix.teams?.home?.name?.split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase().slice(0,4) || "HOM";
+  const awayShort = fix.teams?.away?.name?.split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase().slice(0,4) || "AWY";
+
+  return {
+    id:            String(fix.fixture?.id),
+    afFixtureId:   fix.fixture?.id,
+    home:          fix.teams?.home?.name  || "?",
+    away:          fix.teams?.away?.name  || "?",
+    homeShort,
+    awayShort,
+    homeId,
+    awayId,
+    league:        fix.league?.name       || "?",
+    leagueId:      `af_${fix.league?.id}`,
+    leagueCountry: flag(fix.league?.country),
+    leagueAfId:    fix.league?.id,
+    season:        fix.league?.season,
+    score: {
+      home: fix.goals?.home ?? 0,
+      away: fix.goals?.away ?? 0,
+    },
+    minute:        status.minute,
+    period:        status.period,
+    clock:         `${status.minute}'`,
+    startTime:     fix.fixture?.date || null,
+    statusDetail:  fix.fixture?.status?.long || "",
+    isUpcoming:    isUpcoming || status.type === "upcoming",
+    isDemo:        false,
+
+    // Stats (AF = sempre reais)
+    possession:    gameStats?.possession    ?? { home:50, away:50 },
+    shots:         gameStats?.shots         ?? { home:0,  away:0  },
+    onTarget:      gameStats?.onTarget      ?? { home:0,  away:0  },
+    corners:       gameStats?.corners       ?? { home:0,  away:0  },
+    fouls:         gameStats?.fouls         ?? { home:0,  away:0  },
+    yellowCards,
+    redCards,
+    dangerousAttacks: gameStats?.dangerousAttacks ?? { home:0, away:0 },
+    dangerousAttacksReal: !!gameStats,
+    saves:         gameStats?.saves         ?? { home:0,  away:0  },
+    offsides:      gameStats?.offsides      ?? { home:0,  away:0  },
+    crosses:       gameStats?.crosses       ?? null,
+    passes:        gameStats?.passes        ?? { home:0,  away:0  },
+    accuratePasses:gameStats?.accuratePasses?? { home:0,  away:0  },
+    blockedShots:  gameStats?.blockedShots  ?? { home:0,  away:0  },
+    shotsInsideBox:  gameStats?.shotsInsideBox  ?? null,
+    shotsOutsideBox: gameStats?.shotsOutsideBox ?? null,
+
+    // Tática (subs + formações)
+    substitutions,
+    offensiveSubs: substitutions.length ? detectOffensiveSubs(substitutions, {
+      home: fix.teams?.home?.name, away: fix.teams?.away?.name,
+      score: { home: fix.goals?.home ?? 0, away: fix.goals?.away ?? 0 }
+    }, status.minute) : { home:0, away:0 },
+    formations: formations ? {
+      home: formations.home?.formation || null,
+      away: formations.away?.formation || null,
+      homeAttackScore: formationAttackScore(formations.home?.formation),
+      awayAttackScore: formationAttackScore(formations.away?.formation),
+    } : null,
+
+    venue: fix.fixture?.venue?.name || null,
+  };
+}
+
+// ── Busca upcoming games AF ───────────────────────────────────────────────────
+async function getUpcomingAF() {
+  const apiKey = process.env.APIFOOTBALL_KEY;
+  if (!apiKey) return [];
+
+  const ck = "af_upcoming";
+  const hit = _cache.get(ck);
+  if (hit && Date.now() < hit.exp) return hit.data;
+
   try {
-    // 1. Casar com fixture da API-Football
-    const afMatch = matchAFFixture(afLiveFixtures, game.home, game.away);
-    if (!afMatch) return;
-
-    const fixtureId   = afMatch.fixture?.id;
-    const homeTeamId  = afMatch.teams?.home?.id;
-    const awayTeamId  = afMatch.teams?.away?.id;
-    const leagueId    = afMatch.league?.id;
-    const season      = afMatch.league?.season;
-
-    if (!fixtureId) return;
-    game.afFixtureId = fixtureId;
-
-    // 2. Stats ao vivo + eventos em paralelo (dados mais urgentes)
-    const [afStats, afEvents, afLineups] = await Promise.all([
-      getFixtureStats(fixtureId).catch(() => null),
-      getFixtureEvents(fixtureId).catch(() => null),
-      getLineups(fixtureId).catch(() => null),
-    ]);
-
-    // 3. Aplicar stats AF (têm Shots Inside Box e DA real)
-    if (afStats) {
-      const s = parseStats(afStats);
-
-      // Substitui dados ESPN pelos dados AF (mais precisos)
-      if (s.home.shotsInsideBox !== undefined) {
-        game.shotsInsideBox = { home: s.home.shotsInsideBox, away: s.away.shotsInsideBox };
-      }
-      if (s.home.shotsOutsideBox !== undefined) {
-        game.shotsOutsideBox = { home: s.home.shotsOutsideBox, away: s.away.shotsOutsideBox };
-      }
-      if (s.home.dangerousAttacks !== undefined) {
-        game.dangerousAttacks = { home: s.home.dangerousAttacks, away: s.away.dangerousAttacks };
-        game.dangerousAttacksReal = true; // flag: é dado real, não estimado
-      }
-      if (s.home.attacks !== undefined) {
-        game.attacks = { home: s.home.attacks, away: s.away.attacks };
-      }
-    }
-
-    // 4. Substituições
-    if (afEvents) {
-      game.substitutions = parseSubstitutions(afEvents);
-      const offSubs = detectOffensiveSubs(game.substitutions, game, game.minute);
-      game.offensiveSubs = offSubs;
-    }
-
-    // 5. Formações táticas
-    if (afLineups) {
-      const formations = parseFormations(afLineups);
-      if (formations) {
-        game.formations = {
-          home: formations.home?.formation || null,
-          away: formations.away?.formation || null,
-          homeAttackScore: formationAttackScore(formations.home?.formation),
-          awayAttackScore: formationAttackScore(formations.away?.formation),
-        };
-      }
-    }
-
-    // 6. Dados históricos REAIS de corners (team corner history + H2H)
-    if (homeTeamId && awayTeamId) {
-      const [homeCorners, awayCorners, h2h] = await Promise.all([
-        getTeamCornerHistory(homeTeamId, 8).catch(() => null),
-        getTeamCornerHistory(awayTeamId, 8).catch(() => null),
-        getH2H(homeTeamId, awayTeamId).catch(() => null),
-      ]);
-
-      const homeCorn = parseCornersAvg(homeCorners, true);   // time da casa jogando em casa
-      const awayCorn = parseCornersAvg(awayCorners, false);  // time de fora jogando fora
-      const h2hData  = parseH2HCorners(h2h);
-
-      if (homeCorn || awayCorn || h2hData) {
-        game.historical = {
-          // Médias REAIS de corners das últimas 8 partidas
-          homeCornerAvgHome:  homeCorn?.forHome     ?? null,
-          homeCornerAvgAway:  homeCorn?.forAway     ?? null,
-          awayCornerAvgHome:  awayCorn?.forHome     ?? null,
-          awayCornerAvgAway:  awayCorn?.forAway     ?? null,
-          homeCornerAgstHome: homeCorn?.againstHome ?? null,
-          awayCornerAgstAway: awayCorn?.againstAway ?? null,
-          // Dados brutos para exibição no frontend
-          homeAvgRaw:    homeCorners?.avg   ?? null,
-          awayAvgRaw:    awayCorners?.avg   ?? null,
-          homeGames:     homeCorners?.games ?? 0,
-          awayGames:     awayCorners?.games ?? 0,
-          homeVariance:  homeCorners?.variance ?? null,
-          awayVariance:  awayCorners?.variance ?? null,
-          homeMin:       homeCorners?.min  ?? null,
-          homeMax:       homeCorners?.max  ?? null,
-          awayMin:       awayCorners?.min  ?? null,
-          awayMax:       awayCorners?.max  ?? null,
-          // H2H
-          h2hAvgGoals:   h2hData?.avgGoals        ?? null,
-          h2hEstCorners: h2hData?.estimatedCorners ?? null,
-          h2hGames:      h2hData?.games            ?? 0,
-          // Forma
-          homeForm: null,
-          awayForm: null,
-        };
-      }
-    }
-
-    // 7. Odds ao vivo (só quando confiança potencialmente alta — economiza requests)
-    // Chamado lazy — predictor.js vai usar se disponível
-    // Para não aumentar latência do endpoint principal, odds são fetched apenas
-    // se o jogo já tem sinal forte (checamos rapidamente)
-    const cornersTotal = (game.corners?.home || 0) + (game.corners?.away || 0);
-    const minsElapsed  = game.minute || 0;
-    const baseRate     = minsElapsed > 0 ? cornersTotal / minsElapsed : 0;
-    const likelySignal = baseRate > 0.12 || game.minute >= 60;
-
-    if (likelySignal) {
-      const afOdds = await getLiveOdds(fixtureId).catch(() => null);
-      if (afOdds) {
-        const cornOdds = parseLiveCornerOdds(afOdds);
-        if (cornOdds) game.liveCornerOdds = cornOdds;
-      }
-    }
-
-  } catch (err) {
-    // Enrichment silencioso — não propaga erro
-    console.error("[AF enrichment error]", game.home, "vs", game.away, err?.message);
+    // Data de hoje UTC
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await fetch(
+      `https://v3.football.api-sports.io/fixtures?date=${today}&status=NS&timezone=UTC`,
+      { headers: { "x-apisports-key": apiKey }, signal: AbortSignal.timeout(8000) }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    const fixtures = data.response || [];
+    _cache.set(ck, { data: fixtures, exp: Date.now() + 120_000 }); // cache 2min
+    return fixtures;
+  } catch {
+    return [];
   }
 }
 
+// ── Handler principal ─────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).end();
 
   const hasAF = !!process.env.APIFOOTBALL_KEY;
 
-  // Fase 1 — TODOS os scoreboards ESPN em paralelo
-  // + API-Football live fixtures (se configurado)
-  const [allResults, afLiveFixtures] = await Promise.all([
-    Promise.allSettled(LEAGUES.map(fetchLeague)),
-    hasAF ? getLiveFixtures().catch(() => null) : Promise.resolve(null),
-  ]);
-
-  const liveRaw  = [];
-  const upcoming = [];
-
-  for (const r of allResults) {
-    if (r.status !== "fulfilled") continue;
-    liveRaw.push(...r.value.live.map(e => ({ event: e, league: r.value.league })));
-    upcoming.push(...r.value.upcoming);
+  if (!hasAF) {
+    // ── FALLBACK: ESPN (sem chave AF) ────────────────────────────────────────
+    return await espnFallback(req, res);
   }
 
-  // Fase 2 — ESPN summary para stats detalhadas
-  const liveGames = await Promise.all(
-    liveRaw.map(async ({ event, league }) => {
-      const summary = await fetchGameSummary(league.id, event.id);
-      const parsed  = parseSummaryStats(summary);
-      return normalizeGame(event, league, parsed, false);
-    })
-  );
+  // ── MODO AF-PRIMÁRIO ─────────────────────────────────────────────────────
+  try {
+    // 1. Live fixtures + upcoming em paralelo (2 requests)
+    const [afLive, afUpcoming] = await Promise.all([
+      getLiveFixtures().catch(() => []),
+      getUpcomingAF().catch(() => []),
+    ]);
 
-  // Fase 3 — API-Football enrichment (paralelo, silencioso se sem chave)
-  if (hasAF && afLiveFixtures?.length && liveGames.length) {
-    await Promise.all(
-      liveGames.map(game => enrichWithAF(game, afLiveFixtures))
+    if (!afLive?.length && !afUpcoming?.length) {
+      // AF retornou vazio → fallback ESPN
+      return await espnFallback(req, res);
+    }
+
+    // 2. Stats para TODOS os jogos ao vivo (cache 90s para poupar quota)
+    const statsArr = await Promise.all(
+      liveActive.map(async f => {
+        const id = f.fixture?.id;
+        const ck = `af_stats_${id}`;
+        const hit = _cache.get(ck);
+        if (hit && Date.now() < hit.exp) return { id, stats: hit.data };
+        const stats = await getFixtureStats(id).catch(() => null);
+        if (stats) _cache.set(ck, { data: stats, exp: Date.now() + 90_000 });
+        return { id, stats };
+      })
     );
+    const statsMap = Object.fromEntries(statsArr.map(({ id, stats }) => [id, stats]));
+
+    // 3. Lineups para todos os jogos (cache 30min — não mudam durante o jogo)
+    const lineupsArr = await Promise.all(
+      liveActive.map(async f => {
+        const id = f.fixture?.id;
+        const ck = `af_lineups_${id}`;
+        const hit = _cache.get(ck);
+        if (hit && Date.now() < hit.exp) return { id, lineups: hit.data };
+        const lineups = await getLineups(id).catch(() => null);
+        if (lineups) _cache.set(ck, { data: lineups, exp: Date.now() + 1_800_000 });
+        return { id, lineups };
+      })
+    );
+    const lineupsMap = Object.fromEntries(lineupsArr.map(({ id, lineups }) => [id, lineups]));
+
+    // 4. Histórico de corners para TODOS os jogos ao vivo
+    // (Importante: o leagueAvg calibrado melhora a previsão desde o 1ºT)
+    const historicalArr = await Promise.all(
+      liveActive.map(async f => {
+        const id  = f.fixture?.id;
+        const hId = f.teams?.home?.id;
+        const aId = f.teams?.away?.id;
+        if (!hId || !aId) return { id, historical: null };
+
+        const [homeHist, awayHist, h2h] = await Promise.all([
+          getTeamCornerHistory(hId, 8).catch(() => null),
+          getTeamCornerHistory(aId, 8).catch(() => null),
+          getH2H(hId, aId).catch(() => null),
+        ]);
+
+        const toCorner = hist => hist ? {
+          forHome: +(hist.avg * 1.10).toFixed(2),
+          forAway: +(hist.avg * 0.94).toFixed(2),
+          againstHome: 0, againstAway: 0,
+          avg: hist.avg, games: hist.games,
+          variance: hist.variance, min: hist.min, max: hist.max,
+        } : null;
+
+        const hc = toCorner(homeHist);
+        const ac = toCorner(awayHist);
+        const h2hData = parseH2HCorners(h2h);
+
+        return {
+          id,
+          historical: (hc || ac || h2hData) ? {
+            homeCornerAvgHome:  hc?.forHome     ?? null,
+            homeCornerAvgAway:  hc?.forAway     ?? null,
+            awayCornerAvgHome:  ac?.forHome     ?? null,
+            awayCornerAvgAway:  ac?.forAway     ?? null,
+            homeCornerAgstHome: 0,
+            awayCornerAgstAway: 0,
+            homeAvgRaw:    homeHist?.avg ?? null,
+            awayAvgRaw:    awayHist?.avg ?? null,
+            homeGames:     homeHist?.games ?? 0,
+            awayGames:     awayHist?.games ?? 0,
+            homeVariance:  homeHist?.variance ?? null,
+            awayVariance:  awayHist?.variance ?? null,
+            homeMin:       homeHist?.min ?? null,
+            homeMax:       homeHist?.max ?? null,
+            awayMin:       awayHist?.min ?? null,
+            awayMax:       awayHist?.max ?? null,
+            h2hAvgGoals:   h2hData?.avgGoals ?? null,
+            h2hEstCorners: h2hData?.estimatedCorners ?? null,
+            h2hGames:      h2hData?.games ?? 0,
+            homeForm: null, awayForm: null,
+          } : null,
+        };
+      })
+    );
+    const historicalMap = Object.fromEntries(historicalArr.map(({ id, historical }) => [id, historical]));
+
+    // 5. Odds ao vivo — máximo 8 jogos para poupar quota (prioriza os com mais corners)
+    const sortedByActivity = [...liveActive].sort((a, b) => {
+      const cornA = (statsMap[a.fixture?.id]?.[0]?.statistics?.find(s=>s.type==="Corner Kicks")?.value || 0)
+                  + (statsMap[a.fixture?.id]?.[1]?.statistics?.find(s=>s.type==="Corner Kicks")?.value || 0);
+      const cornB = (statsMap[b.fixture?.id]?.[0]?.statistics?.find(s=>s.type==="Corner Kicks")?.value || 0)
+                  + (statsMap[b.fixture?.id]?.[1]?.statistics?.find(s=>s.type==="Corner Kicks")?.value || 0);
+      return Number(cornB) - Number(cornA);
+    });
+
+    const oddsPromises = sortedByActivity
+      .slice(0, 8) // máximo 8 jogos com maior atividade de corners
+      .map(async f => {
+        const id = f.fixture?.id;
+        const ck = `af_odds_${id}`;
+        const hit = _cache.get(ck);
+        if (hit && Date.now() < hit.exp) return { id, odds: hit.data };
+        const oddsRaw = await getLiveOdds(id).catch(() => null);
+        const odds = parseLiveCornerOdds(oddsRaw);
+        if (odds) _cache.set(ck, { data: odds, exp: Date.now() + 30_000 });
+        return { id, odds };
+      });
+    const oddsArr = await Promise.all(oddsPromises);
+    const oddsMap = Object.fromEntries(oddsArr.map(({ id, odds }) => [id, odds]));
+
+    // 6. Monta jogos ao vivo
+    const allLiveGames = (afLive || [])
+      .filter(f => {
+        const s = f.fixture?.status?.short;
+        return ["1H","2H","ET","HT"].includes(s);
+      })
+      .map(f => {
+        const id = f.fixture?.id;
+        const game = normalizeAFGame(
+          f,
+          statsMap[id] || null,
+          lineupsMap[id] || null,
+          false
+        );
+        if (historicalMap[id]) game.historical = historicalMap[id];
+        if (oddsMap[id])       game.liveCornerOdds = oddsMap[id];
+        return game;
+      });
+
+    // 7. Monta jogos futuros (próximas 3h, ligas relevantes)
+    const now = Date.now();
+    const relevantLeagues = new Set([
+      39,40,61,62,135,140,141,78,88,94,135,203,106,
+      // Champions, Europa, Sul-Americana, Libertadores
+      2,3,4,11,13,
+      // Top americanas
+      13,253,262,268,
+    ]);
+    const upcoming = (afUpcoming || [])
+      .filter(f => {
+        const kickoff = f.fixture?.timestamp * 1000;
+        const inNext3h = kickoff > now && kickoff < now + 3*3600*1000;
+        const isRelevant = relevantLeagues.has(f.league?.id);
+        return inNext3h && isRelevant;
+      })
+      .slice(0, 60)
+      .map(f => normalizeAFGame(f, null, null, true))
+      .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(200).json({
+      games:          allLiveGames,
+      upcoming,
+      liveCount:      allLiveGames.length,
+      upcomingCount:  upcoming.length,
+      afPrimary:      true,
+      afEnriched:     true,
+      demo:           false,
+      timestamp:      new Date().toISOString(),
+    });
+
+  } catch (err) {
+    console.error("[games.js AF-Primary error]", err.message);
+    return await espnFallback(req, res);
   }
+}
 
-  upcoming.sort((a, b) =>
-    a.startTime && b.startTime ? new Date(a.startTime) - new Date(b.startTime) : 0
-  );
-
-  res.setHeader("Cache-Control", "no-store");
-  return res.status(200).json({
-    games:          liveGames,
-    upcoming:       upcoming.slice(0, 50),
-    liveCount:      liveGames.length,
-    upcomingCount:  upcoming.length,
-    leaguesQueried: LEAGUES.length,
-    afEnriched:     hasAF,
-    demo:           false,
-    timestamp:      new Date().toISOString(),
-  });
+// ── ESPN Fallback (mantido para quando sem chave AF) ──────────────────────────
+async function espnFallback(req, res) {
+  try {
+    const { default: handler } = await import("./gamesEspn.js");
+    return handler(req, res);
+  } catch {
+    res.setHeader("Cache-Control","no-store");
+    return res.status(200).json({ games:[], upcoming:[], liveCount:0, upcomingCount:0, demo:true, timestamp: new Date().toISOString() });
+  }
 }
