@@ -228,6 +228,24 @@ function normalizeAFGame(fix, stats, lineups, isUpcoming = false) {
   };
 }
 
+// ── Ligas com dados históricos confiáveis ─────────────────────────────────────
+const TOP_LEAGUES_HIST = new Set([
+  39,40,41,   // England 1/2/3
+  61,62,      // France 1/2
+  135,136,    // Italy 1/2
+  140,141,    // Spain 1/2
+  78,79,      // Germany 1/2
+  94,95,      // Portugal
+  88,89,      // Netherlands
+  203,        // Turkey
+  2,3,4,      // Champions/Europa/Conference
+  128,        // Argentina
+  71,72,      // Brazil 1/2
+  262,239,    // Mexico
+  253,        // MLS
+  106,        // Poland
+]);
+
 // ── Busca upcoming games AF ───────────────────────────────────────────────────
 async function getUpcomingAF() {
   const apiKey = process.env.APIFOOTBALL_KEY;
@@ -283,67 +301,43 @@ export default async function handler(req, res) {
       return ["1H","2H","ET","HT"].includes(s);
     });
 
-    // 2. Stats para TODOS os jogos ao vivo (OTIMIZADO: cache 3min era 90s)
-    const statsArr = await Promise.all(
-      liveActive.map(async f => {
+    // 2+3+4. Stats, Lineups e Histórico TODOS EM PARALELO
+    // (antes sequencial: 8s+8s+16s = 32s > timeout 30s)
+    // (agora paralelo: max(8s,8s,16s) = 16s ✅)
+    const [statsArr, lineupsArr, historicalArr] = await Promise.all([
+
+      // Stats (cache 3min)
+      Promise.all(liveActive.map(async f => {
         const id = f.fixture?.id;
         const ck = `af_stats_${id}`;
         const hit = _cache.get(ck);
         if (hit && Date.now() < hit.exp) return { id, stats: hit.data };
         const stats = await getFixtureStats(id).catch(() => null);
-        if (stats) _cache.set(ck, { data: stats, exp: Date.now() + 180_000 }); // 3min
+        if (stats) _cache.set(ck, { data: stats, exp: Date.now() + 180_000 });
         return { id, stats };
-      })
-    );
-    const statsMap = Object.fromEntries(statsArr.map(({ id, stats }) => [id, stats]));
+      })),
 
-    // 3. Lineups para todos os jogos (OTIMIZADO: cache 4h, era 30min)
-    const lineupsArr = await Promise.all(
-      liveActive.map(async f => {
+      // Lineups (cache 4h)
+      Promise.all(liveActive.map(async f => {
         const id = f.fixture?.id;
         const ck = `af_lineups_${id}`;
         const hit = _cache.get(ck);
         if (hit && Date.now() < hit.exp) return { id, lineups: hit.data };
         const lineups = await getLineups(id).catch(() => null);
-        if (lineups) _cache.set(ck, { data: lineups, exp: Date.now() + 14_400_000 }); // 4h
+        if (lineups) _cache.set(ck, { data: lineups, exp: Date.now() + 14_400_000 });
         return { id, lineups };
-      })
-    );
-    const lineupsMap = Object.fromEntries(lineupsArr.map(({ id, lineups }) => [id, lineups]));
+      })),
 
-    // 4. Histórico OTIMIZADO:
-    //    - Só ligas top (economiza para ligas obscuras que não vamos apostar)
-    //    - last=5 em vez de 8 (economiza 6 req/time)
-    //    - Cache 8h em vez de 1h (médias não mudam ao longo do dia)
-    const TOP_LEAGUES_HIST = new Set([
-      39,40,41,  // England 1/2/3
-      61,62,     // France 1/2
-      135,136,   // Italy 1/2
-      140,141,   // Spain 1/2
-      78,79,     // Germany 1/2
-      94,95,     // Portugal
-      88,89,     // Netherlands
-      203,       // Turkey
-      2,3,4,     // Champions/Europa/Conference
-      128,       // Argentina
-      71,72,     // Brazil 1/2
-      262,239,   // Mexico
-      253,       // MLS
-      106,       // Poland
-    ]);
-
-    const historicalArr = await Promise.all(
-      liveActive.map(async f => {
+      // Histórico (só top leagues, last=5, cache 8h)
+      Promise.all(liveActive.map(async f => {
         const id  = f.fixture?.id;
         const hId = f.teams?.home?.id;
         const aId = f.teams?.away?.id;
         if (!hId || !aId) return { id, historical: null };
-
-        // Só busca histórico para ligas relevantes para apostas
         if (!TOP_LEAGUES_HIST.has(f.league?.id)) return { id, historical: null };
 
         const [homeHist, awayHist, h2h] = await Promise.all([
-          getTeamCornerHistory(hId, 5).catch(() => null), // OTIMIZADO: 5 jogos (era 8)
+          getTeamCornerHistory(hId, 5).catch(() => null),
           getTeamCornerHistory(aId, 5).catch(() => null),
           getH2H(hId, aId).catch(() => null),
         ]);
@@ -385,9 +379,13 @@ export default async function handler(req, res) {
             homeForm: null, awayForm: null,
           } : null,
         };
-      })
-    );
-    const historicalMap = Object.fromEntries(historicalArr.map(({ id, historical }) => [id, historical]));
+      })),
+
+    ]); // fim do Promise.all geral
+
+    const statsMap     = Object.fromEntries(statsArr    .map(({ id, stats })     => [id, stats]));
+    const lineupsMap   = Object.fromEntries(lineupsArr  .map(({ id, lineups })   => [id, lineups]));
+    const historicalMap= Object.fromEntries(historicalArr.map(({ id, historical })=> [id, historical]));
 
     // 5. Odds ao vivo — DESABILITADAS por padrão (maior custo: 960 req/h)
     //    Para reativar: trocar ODDS_ENABLED para true
