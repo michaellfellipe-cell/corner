@@ -340,13 +340,158 @@ function normalizeGame(event, league, parsed, isUpcomingGame) {
   };
 }
 
+// ── API-Football enrichment (opcional — ativa quando APIFOOTBALL_KEY está set) ──
+import {
+  getLiveFixtures, getFixtureStats, getFixtureEvents, getLineups,
+  getTeamStats, getH2H, getLiveOdds, searchTeam,
+  matchAFFixture, parseStats, parseSubstitutions, parseCornersAvg,
+  parseH2HCorners, parseFormations, parseLiveCornerOdds,
+  detectOffensiveSubs, formationAttackScore,
+} from "../../lib/apifootball.js";
+
+// Cache de IDs de times (team name → AF team ID)
+const teamIdCache = new Map();
+
+async function findTeamId(teamName) {
+  const key = teamName.toLowerCase();
+  if (teamIdCache.has(key)) return teamIdCache.get(key);
+  const res = await searchTeam(teamName).catch(() => null);
+  if (res && res[0]) {
+    const id = res[0].team?.id;
+    if (id) { teamIdCache.set(key, id); return id; }
+  }
+  return null;
+}
+
+async function enrichWithAF(game, afLiveFixtures) {
+  try {
+    // 1. Casar com fixture da API-Football
+    const afMatch = matchAFFixture(afLiveFixtures, game.home, game.away);
+    if (!afMatch) return;
+
+    const fixtureId   = afMatch.fixture?.id;
+    const homeTeamId  = afMatch.teams?.home?.id;
+    const awayTeamId  = afMatch.teams?.away?.id;
+    const leagueId    = afMatch.league?.id;
+    const season      = afMatch.league?.season;
+
+    if (!fixtureId) return;
+    game.afFixtureId = fixtureId;
+
+    // 2. Stats ao vivo + eventos em paralelo (dados mais urgentes)
+    const [afStats, afEvents, afLineups] = await Promise.all([
+      getFixtureStats(fixtureId).catch(() => null),
+      getFixtureEvents(fixtureId).catch(() => null),
+      getLineups(fixtureId).catch(() => null),
+    ]);
+
+    // 3. Aplicar stats AF (têm Shots Inside Box e DA real)
+    if (afStats) {
+      const s = parseStats(afStats);
+
+      // Substitui dados ESPN pelos dados AF (mais precisos)
+      if (s.home.shotsInsideBox !== undefined) {
+        game.shotsInsideBox = { home: s.home.shotsInsideBox, away: s.away.shotsInsideBox };
+      }
+      if (s.home.shotsOutsideBox !== undefined) {
+        game.shotsOutsideBox = { home: s.home.shotsOutsideBox, away: s.away.shotsOutsideBox };
+      }
+      if (s.home.dangerousAttacks !== undefined) {
+        game.dangerousAttacks = { home: s.home.dangerousAttacks, away: s.away.dangerousAttacks };
+        game.dangerousAttacksReal = true; // flag: é dado real, não estimado
+      }
+      if (s.home.attacks !== undefined) {
+        game.attacks = { home: s.home.attacks, away: s.away.attacks };
+      }
+    }
+
+    // 4. Substituições
+    if (afEvents) {
+      game.substitutions = parseSubstitutions(afEvents);
+      const offSubs = detectOffensiveSubs(game.substitutions, game, game.minute);
+      game.offensiveSubs = offSubs;
+    }
+
+    // 5. Formações táticas
+    if (afLineups) {
+      const formations = parseFormations(afLineups);
+      if (formations) {
+        game.formations = {
+          home: formations.home?.formation || null,
+          away: formations.away?.formation || null,
+          homeAttackScore: formationAttackScore(formations.home?.formation),
+          awayAttackScore: formationAttackScore(formations.away?.formation),
+        };
+      }
+    }
+
+    // 6. Dados históricos (team stats + H2H) — em paralelo
+    if (homeTeamId && awayTeamId && leagueId && season) {
+      const [homeStats, awayStats, h2h] = await Promise.all([
+        getTeamStats(homeTeamId, leagueId, season).catch(() => null),
+        getTeamStats(awayTeamId, leagueId, season).catch(() => null),
+        getH2H(homeTeamId, awayTeamId).catch(() => null),
+      ]);
+
+      const homeCorn = parseCornersAvg(homeStats);
+      const awayCorn = parseCornersAvg(awayStats);
+      const h2hData  = parseH2HCorners(h2h);
+
+      if (homeCorn || awayCorn || h2hData) {
+        game.historical = {
+          // Casa jogando em casa vs fora
+          homeCornerAvgHome: homeCorn?.forHome     || null,
+          homeCornerAvgAway: homeCorn?.forAway     || null,
+          awayCornerAvgHome: awayCorn?.forHome     || null,
+          awayCornerAvgAway: awayCorn?.forAway     || null,
+          // Corners sofridos (relevante para projeção total)
+          homeCornerAgstHome: homeCorn?.againstHome || null,
+          awayCornerAgstAway: awayCorn?.againstAway || null,
+          // H2H
+          h2hAvgGoals:     h2hData?.avgGoals     || null,
+          h2hEstCorners:   h2hData?.estimatedCorners || null,
+          h2hGames:        h2hData?.games        || 0,
+          // Forma recente
+          homeForm:        homeCorn?.form        || null,
+          awayForm:        awayCorn?.form        || null,
+        };
+      }
+    }
+
+    // 7. Odds ao vivo (só quando confiança potencialmente alta — economiza requests)
+    // Chamado lazy — predictor.js vai usar se disponível
+    // Para não aumentar latência do endpoint principal, odds são fetched apenas
+    // se o jogo já tem sinal forte (checamos rapidamente)
+    const cornersTotal = (game.corners?.home || 0) + (game.corners?.away || 0);
+    const minsElapsed  = game.minute || 0;
+    const baseRate     = minsElapsed > 0 ? cornersTotal / minsElapsed : 0;
+    const likelySignal = baseRate > 0.12 || game.minute >= 60;
+
+    if (likelySignal) {
+      const afOdds = await getLiveOdds(fixtureId).catch(() => null);
+      if (afOdds) {
+        const cornOdds = parseLiveCornerOdds(afOdds);
+        if (cornOdds) game.liveCornerOdds = cornOdds;
+      }
+    }
+
+  } catch (err) {
+    // Enrichment silencioso — não propaga erro
+    console.error("[AF enrichment error]", game.home, "vs", game.away, err?.message);
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).end();
 
-  // Fase 1 — TODOS os scoreboards em paralelo com timeout individual de 5s
-  // Paralelo total = tempo do request mais lento (~2s), NÃO soma de todos
-  // Batches sequenciais com 110 ligas → 20s+ → estoura o limite do Vercel
-  const allResults = await Promise.allSettled(LEAGUES.map(fetchLeague));
+  const hasAF = !!process.env.APIFOOTBALL_KEY;
+
+  // Fase 1 — TODOS os scoreboards ESPN em paralelo
+  // + API-Football live fixtures (se configurado)
+  const [allResults, afLiveFixtures] = await Promise.all([
+    Promise.allSettled(LEAGUES.map(fetchLeague)),
+    hasAF ? getLiveFixtures().catch(() => null) : Promise.resolve(null),
+  ]);
 
   const liveRaw  = [];
   const upcoming = [];
@@ -357,7 +502,7 @@ export default async function handler(req, res) {
     upcoming.push(...r.value.upcoming);
   }
 
-  // Fase 2 — summary de cada jogo ao vivo para stats detalhadas (todos em paralelo)
+  // Fase 2 — ESPN summary para stats detalhadas
   const liveGames = await Promise.all(
     liveRaw.map(async ({ event, league }) => {
       const summary = await fetchGameSummary(league.id, event.id);
@@ -365,6 +510,13 @@ export default async function handler(req, res) {
       return normalizeGame(event, league, parsed, false);
     })
   );
+
+  // Fase 3 — API-Football enrichment (paralelo, silencioso se sem chave)
+  if (hasAF && afLiveFixtures?.length && liveGames.length) {
+    await Promise.all(
+      liveGames.map(game => enrichWithAF(game, afLiveFixtures))
+    );
+  }
 
   upcoming.sort((a, b) =>
     a.startTime && b.startTime ? new Date(a.startTime) - new Date(b.startTime) : 0
@@ -377,6 +529,7 @@ export default async function handler(req, res) {
     liveCount:      liveGames.length,
     upcomingCount:  upcoming.length,
     leaguesQueried: LEAGUES.length,
+    afEnriched:     hasAF,
     demo:           false,
     timestamp:      new Date().toISOString(),
   });
