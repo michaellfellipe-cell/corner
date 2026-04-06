@@ -445,11 +445,11 @@ export default async function handler(req, res) {
 
 // ── ESPN Fallback (mantido para quando sem chave AF) ──────────────────────────
 async function espnFallback(req, res) {
-  try {
-    const { default: handler } = await import("./gamesEspn.js");
-    return handler(req, res);
-  } catch {
-    res.setHeader("Cache-Control","no-store");
-    return res.status(200).json({ games:[], upcoming:[], liveCount:0, upcomingCount:0, demo:true, timestamp: new Date().toISOString() });
-  }
+  // Retorna jogos demo quando API-Football não está configurada
+  res.setHeader("Cache-Control", "no-store");
+  return res.status(200).json({
+    games: [], upcoming: [], liveCount: 0, upcomingCount: 0,
+    demo: true, afPrimary: false,
+    timestamp: new Date().toISOString(),
+  });
 }
