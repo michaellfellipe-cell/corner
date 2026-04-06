@@ -1,11 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Head from "next/head";
-import { projectCorners, generateDemoGame } from "../lib/predictor";
+import { projectCorners, generateDemoGame, analyzeFinalWindow } from "../lib/predictor";
 
-const ALERT_THRESHOLD = 70;
-const RED_THRESHOLD   = 80;
+const ALERT_THRESHOLD = 62;  // baseado em dados reais: 62%+ acerta 95%
+const RED_THRESHOLD   = 75;  // vermelho: alta convicção
 const BLOCK_ALERTS    = 82;  // após esse minuto não dispara alerta
-const confColor = (c) => c >= RED_THRESHOLD ? "#ff4560" : c >= ALERT_THRESHOLD ? "#00e5a0" : c >= 50 ? "#f0c040" : "#3d4f6b";
+// 2ºT: verde=62+, vermelho=75+ | 1ºT: mais conservador (vem do predictor)
+const confColor = (c, isEarly) => {
+  if (isEarly) return c >= 72 ? "#f0c040" : c >= 55 ? "#f0c04099" : "#3d4f6b"; // 1ºT: amarelo
+  return c >= RED_THRESHOLD ? "#ff4560" : c >= ALERT_THRESHOLD ? "#00e5a0" : c >= 45 ? "#f0c040" : "#3d4f6b";
+};
 
 const sigColor = s => s === "STRONG" ? "#ff4560" : s === "MODERATE" ? "#f0c040" : "#3d4f6b";
 const impactColor = i => i === "high" ? "#00e5a0" : i === "medium" ? "#f0c040" : "#4a6070";
@@ -156,7 +160,7 @@ function GameCard({ game, onSelect, isSelected }) {
   const isRed   = conf >= RED_THRESHOLD  && !isTooLate;
   const isGreen = conf >= ALERT_THRESHOLD && !isTooLate;
   // Se tarde demais → cinza independente da confiança
-  const sc = isTooLate ? "#3d4f6b" : confColor(conf);
+  const sc = isTooLate ? "#3d4f6b" : confColor(conf, pred.isEarly);
 
   return (
     <div onClick={() => onSelect(game)} style={{
@@ -186,9 +190,10 @@ function GameCard({ game, onSelect, isSelected }) {
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <span style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b" }}>
           ESC {game.corners?.home??0}–{game.corners?.away??0} · CRZ {(game.crosses?.home??0)+(game.crosses?.away??0)}
+          {pred.isPostGoalCooldown && <span style={{ color:"#f0c040", marginLeft:5 }}>⚡reorg</span>}
         </span>
         <div style={{ display:"flex", alignItems:"center", gap:5 }}>
-          {pred.isFastTrack && <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#f0c040" }}>⚡</span>}
+          {pred.isFastTrack && <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#f0c040" }}>⚡FT</span>}
           <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b" }}>{pred.phase}</span>
           <span style={{ fontFamily:"var(--mono)", fontSize:9, color:"#4a6070" }}>~{pred.projected10}/10m</span>
           <span style={{
@@ -218,15 +223,17 @@ function AlertBanner({ alerts, onDismiss, soundOn, onToggleSound }) {
         {alerts.map(a => (
           <div key={a.id} onClick={a.onClick} style={{ flexShrink:0, display:"flex", alignItems:"center", gap:6,
             fontFamily:"var(--mono)", fontSize:9, background:"#00e5a00d", padding:"5px 10px",
-            borderRadius:5, border:"1px solid #00e5a033", cursor:"pointer", whiteSpace:"nowrap" }}>
-            <span style={{ color:"#3d4f6b", fontSize:8 }}>{a.phase}</span>
+            borderRadius:5, border:`1px solid ${a.isNextWindow ? "#00e5a055" : "#00e5a033"}`, cursor:"pointer", whiteSpace:"nowrap" }}>
+            <span style={{ color:"#3d4f6b", fontSize:8 }}>{a.subPhase}</span>
             <span style={{ color:"#00e5a0", fontWeight:700 }}>{a.game}</span>
             <span style={{ color:"#3d4f6b" }}>·</span>
             <span style={{ color:"#f0c040" }}>{a.minute}'</span>
             <span style={{ color:"#3d4f6b" }}>·</span>
-            <span style={{ color:"#c9d6e3" }}>{a.market}</span>
+            {/* Janela alvo — destaque principal */}
+            <span style={{ color:"#080b10", background: a.isNextWindow ? "#00e5a0" : "#f0c040", padding:"1px 6px", borderRadius:3, fontSize:8, fontWeight:700 }}>
+              {a.isNextWindow ? "→" : ""} {a.targetWindow}
+            </span>
             <span style={{ background: a.confidence >= RED_THRESHOLD ? "#ff4560" : "#00e5a0", color:"#080b10", padding:"1px 5px", borderRadius:3, fontSize:8, fontWeight:700 }}>{a.confidence}%</span>
-            {a.minsLeft && <span style={{ color:"#f0c040", fontSize:8 }}>⏱~{a.minsLeft}min</span>}
           </div>
         ))}
       </div>
@@ -294,7 +301,7 @@ export default function Home() {
       list.forEach(g => {
         const pred = projectCorners(g);
         const canAlert = pred.confidence >= ALERT_THRESHOLD
-          && !pred.entryWindow.isTooLate          // bloqueia após 82'
+          && !pred.entryWindow.isTooLate
           && prevSigs.current[g.id] !== "ALERTED";
 
         if (canAlert) {
@@ -305,14 +312,17 @@ export default function Home() {
             market: pred.market.betRange,
             confidence: pred.confidence,
             phase: pred.phase,
+            subPhase: pred.subPhase,
             minsLeft: pred.entryWindow.minsLeft,
+            targetWindow: pred.targetBetWindow.label,
+            isNextWindow: pred.targetBetWindow.isNext,
             onClick: () => handleSelectRef.current(g),
           }, ...a].slice(0, 5));
           setAlertsVisible(true);
           newAlertFired = true;
         }
         if (pred.confidence >= ALERT_THRESHOLD) prevSigs.current[g.id] = "ALERTED";
-        else if (pred.confidence < 65) prevSigs.current[g.id] = "reset";
+        else if (pred.confidence < 55) prevSigs.current[g.id] = "reset";
       });
 
       // Toca som de dinheiro quando um novo alerta aparecer
@@ -357,7 +367,7 @@ export default function Home() {
   const isRed   = (pred?.confidence ?? 0) >= RED_THRESHOLD;
   const isGreen = (pred?.confidence ?? 0) >= ALERT_THRESHOLD;
   const isStrong = isRed || isGreen;
-  const sc   = pred ? confColor(pred.confidence) : "#3d4f6b";
+  const sc   = pred ? confColor(pred.confidence, pred.isEarly) : "#3d4f6b";
 
   return (
     <>
@@ -501,34 +511,65 @@ export default function Home() {
                           ~{pred.projected10} proj · pressão {pred.pressureMult}× · peso taxa {Math.round(pred.pesoReal*100)}%
                         </div>
 
-                        {/* JANELA DE ENTRADA */}
+                        {/* JANELA ALVO DA CASA DE APOSTAS */}
+                        {(() => {
+                          const tbw = pred.targetBetWindow;
+                          const isNext = tbw.isNext;
+                          const bgColor  = isNext ? "#00e5a011" : "#0a1a2a";
+                          const bdColor  = isNext ? "#00e5a055" : "#1c2333";
+                          const lblColor = isNext ? "#00e5a0"   : "#f0c040";
+                          return (
+                            <div style={{ marginTop:12, width:"100%", background:bgColor, border:`1px solid ${bdColor}`, borderRadius:8, padding:"10px 14px" }}>
+                              <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2, marginBottom:6 }}>
+                                {isNext ? "▸ APOSTAR NA PRÓXIMA FAIXA" : "▸ FAIXA ATIVA"}
+                              </div>
+                              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+                                <div>
+                                  <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:28, color:lblColor, letterSpacing:1, lineHeight:1 }}>
+                                    {tbw.label}
+                                  </div>
+                                  <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#3d4f6b", marginTop:3 }}>
+                                    {tbw.actionLabel}
+                                  </div>
+                                </div>
+                                <div style={{ textAlign:"right" }}>
+                                  <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b" }}>SUBFASE</div>
+                                  <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:18, color:"#4a6070" }}>{pred.subPhase}</div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {/* JANELA DE TEMPO RESTANTE */}
                         {(() => {
                           const w = pred.entryWindow;
                           const wColor = w.urgency === "blocked" ? "#3d4f6b"
                             : w.urgency === "good"    ? "#00e5a0"
                             : w.urgency === "warning" ? "#f0c040"
                             : "#ff4560";
-                          const wBg = w.urgency === "blocked" ? "#1a2235"
-                            : w.urgency === "good"    ? "#00e5a011"
-                            : w.urgency === "warning" ? "#f0c04015"
-                            : "#ff456015";
                           const wIcon = w.urgency === "blocked" ? "🚫"
                             : w.urgency === "good"    ? "✅"
                             : w.urgency === "warning" ? "⚠️"
                             : "⏰";
                           return (
-                            <div style={{ marginTop:10, background:wBg, border:`1px solid ${wColor}44`, borderRadius:6, padding:"7px 12px", display:"inline-flex", alignItems:"center", gap:6 }}>
-                              <span style={{ fontSize:13 }}>{wIcon}</span>
-                              <div style={{ textAlign:"left" }}>
-                                <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:1 }}>JANELA DE ENTRADA</div>
-                                <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:14, color:wColor }}>{w.label}</div>
-                              </div>
-                              <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", background:"#0a0f18", padding:"2px 6px", borderRadius:3, marginLeft:4 }}>
-                                MODO {pred.phase}
-                              </span>
+                            <div style={{ marginTop:8, display:"flex", alignItems:"center", gap:6, justifyContent:"center" }}>
+                              <span style={{ fontSize:11 }}>{wIcon}</span>
+                              <span style={{ fontFamily:"var(--mono)", fontSize:10, color:wColor }}>{w.label}</span>
                             </div>
                           );
                         })()}
+
+                        {/* AVISO PÓS-GOL */}
+                        {pred.isPostGoalCooldown && (
+                          <div style={{ marginTop:8, background:"#f0c04012", border:"1px solid #f0c04044", borderRadius:6, padding:"6px 12px", display:"flex", alignItems:"center", gap:6 }}>
+                            <span style={{ fontSize:11 }}>⚡</span>
+                            <div>
+                              <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#f0c040", letterSpacing:1 }}>REORGANIZAÇÃO PÓS-GOL</div>
+                              <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b" }}>Espere confirmar pressão antes de entrar</div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -606,6 +647,92 @@ export default function Home() {
                       </div>
                     </div>
                   </div>
+
+                  {/* ── ANÁLISE ESPECIAL 80-FIM ── */}
+                  {(() => {
+                    const fw = analyzeFinalWindow(selected);
+                    if (!fw) return null;
+                    return (
+                      <div style={{ background: fw.gameIsSettled ? "#160808" : "#06100e", border:`2px solid ${fw.verdictColor}77`, borderRadius:10, padding:18, marginTop:0 }}>
+
+                        {/* Header */}
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
+                          <div>
+                            <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2 }}>▸ ANÁLISE 80-FIM · MERCADO DISPONÍVEL</div>
+                            <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:22, color:fw.verdictColor, marginTop:3, lineHeight:1 }}>
+                              {fw.verdictIcon} OVER 1.5 CORNERS
+                            </div>
+                            <div style={{ fontFamily:"var(--mono)", fontSize:10, color:fw.verdictColor, marginTop:4 }}>{fw.verdict}</div>
+                            <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", marginTop:2 }}>{fw.verdictDetail}</div>
+                          </div>
+                          <div style={{ textAlign:"right", flexShrink:0, marginLeft:12 }}>
+                            <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b" }}>TEMPO EFETIVO</div>
+                            <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:26, color:"#f0c040", lineHeight:1 }}>~{fw.effectiveMins}min</div>
+                            <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b" }}>10min + ~{fw.estimatedStoppage}min acrés.</div>
+                          </div>
+                        </div>
+
+                        {/* Probabilidade principal — Over 1.5 */}
+                        <div style={{ background:"#0a0f18", borderRadius:8, padding:"14px 16px", marginBottom:12, border:`1px solid ${fw.verdictColor}44` }}>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                            <div>
+                              <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", marginBottom:3 }}>PROBABILIDADE — OVER 1.5 CORNERS (faixa 80-FIM)</div>
+                              <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:44, color:fw.verdictColor, lineHeight:1 }}>
+                                {fw.probOver15}%
+                              </div>
+                            </div>
+                            <div style={{ textAlign:"right" }}>
+                              <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", marginBottom:3 }}>PROJEÇÃO</div>
+                              <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:28, color:"#c9d6e3", lineHeight:1 }}>~{fw.projCorners}</div>
+                              <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b" }}>corners (λ={fw.lambda})</div>
+                            </div>
+                          </div>
+                          {/* Barra de probabilidade */}
+                          <div style={{ height:8, background:"#1a2235", borderRadius:4, overflow:"hidden", position:"relative" }}>
+                            {/* Linha de 70% = threshold de viabilidade */}
+                            <div style={{ position:"absolute", left:"70%", top:0, bottom:0, width:2, background:"#3d4f6b", zIndex:2 }}/>
+                            <div style={{ width:`${fw.probOver15}%`, height:"100%", background:`linear-gradient(90deg, #1a4060, ${fw.verdictColor})`, borderRadius:4, transition:"width 1.2s", boxShadow:`0 0 10px ${fw.verdictColor}55` }}/>
+                          </div>
+                          <div style={{ display:"flex", justifyContent:"space-between", fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", marginTop:3 }}>
+                            <span>0%</span>
+                            <span style={{ color:"#4a6070" }}>← mínimo viável 70% →</span>
+                            <span>100%</span>
+                          </div>
+                        </div>
+
+                        {/* Contexto: o que falta */}
+                        {fw.missingFor15 && (
+                          <div style={{ background:"#ff456010", border:"1px solid #ff456033", borderRadius:6, padding:"7px 12px", marginBottom:10, fontFamily:"var(--mono)", fontSize:9, color:"#ff4560" }}>
+                            ⚠️ {fw.missingFor15}
+                          </div>
+                        )}
+
+                        {/* Referência Over 0.5 (contexto) */}
+                        <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+                          <div style={{ flex:1, background:"#0a0f18", borderRadius:6, padding:"8px 10px", border:"1px solid #1c2333", opacity:0.6 }}>
+                            <div style={{ fontFamily:"var(--mono)", fontSize:7, color:"#3d4f6b", marginBottom:2 }}>OVER 0.5 (indisponível nesta faixa)</div>
+                            <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:16, color:"#3d4f6b" }}>{fw.probOver05}%</div>
+                          </div>
+                          <div style={{ flex:2, background:"#0a0f18", borderRadius:6, padding:"8px 10px", border:`1px solid ${fw.verdictColor}33` }}>
+                            <div style={{ fontFamily:"var(--mono)", fontSize:7, color:"#3d4f6b", marginBottom:2 }}>MULT PRESSÃO FINAL · ACRÉSCIMOS</div>
+                            <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#c9d6e3" }}>
+                              {fw.finalMult}× pressão &nbsp;·&nbsp; ~{fw.estimatedStoppage}min extra &nbsp;·&nbsp; {fw.totalCorners} corners no jogo
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Fatores */}
+                        <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#3d4f6b", letterSpacing:2, marginBottom:8 }}>FATORES ANALISADOS</div>
+                        <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
+                          {fw.reasons.map((r, i) => (
+                            <div key={i} style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 10px", background:"#0a0f18", borderRadius:5, borderLeft:`3px solid ${r.color}` }}>
+                              <span style={{ fontFamily:"var(--mono)", fontSize:9, color:r.color, fontWeight:r.strong ? 700 : 400 }}>{r.text}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </>
               )}
             </div>
