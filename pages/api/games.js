@@ -238,7 +238,6 @@ async function getUpcomingAF() {
   if (hit && Date.now() < hit.exp) return hit.data;
 
   try {
-    // Data de hoje UTC
     const today = new Date().toISOString().slice(0, 10);
     const res = await fetch(
       `https://v3.football.api-sports.io/fixtures?date=${today}&status=NS&timezone=UTC`,
@@ -247,7 +246,7 @@ async function getUpcomingAF() {
     if (!res.ok) return [];
     const data = await res.json();
     const fixtures = data.response || [];
-    _cache.set(ck, { data: fixtures, exp: Date.now() + 120_000 }); // cache 2min
+    _cache.set(ck, { data: fixtures, exp: Date.now() + 900_000 }); // OTIMIZADO: 15min (era 2min)
     return fixtures;
   } catch {
     return [];
@@ -278,7 +277,13 @@ export default async function handler(req, res) {
       return await espnFallback(req, res);
     }
 
-    // 2. Stats para TODOS os jogos ao vivo (cache 90s para poupar quota)
+    // Jogos realmente em andamento (exclui HT e encerrados para stats)
+    const liveActive = (afLive || []).filter(f => {
+      const s = f.fixture?.status?.short;
+      return ["1H","2H","ET","HT"].includes(s);
+    });
+
+    // 2. Stats para TODOS os jogos ao vivo (OTIMIZADO: cache 3min era 90s)
     const statsArr = await Promise.all(
       liveActive.map(async f => {
         const id = f.fixture?.id;
@@ -286,13 +291,13 @@ export default async function handler(req, res) {
         const hit = _cache.get(ck);
         if (hit && Date.now() < hit.exp) return { id, stats: hit.data };
         const stats = await getFixtureStats(id).catch(() => null);
-        if (stats) _cache.set(ck, { data: stats, exp: Date.now() + 90_000 });
+        if (stats) _cache.set(ck, { data: stats, exp: Date.now() + 180_000 }); // 3min
         return { id, stats };
       })
     );
     const statsMap = Object.fromEntries(statsArr.map(({ id, stats }) => [id, stats]));
 
-    // 3. Lineups para todos os jogos (cache 30min — não mudam durante o jogo)
+    // 3. Lineups para todos os jogos (OTIMIZADO: cache 4h, era 30min)
     const lineupsArr = await Promise.all(
       liveActive.map(async f => {
         const id = f.fixture?.id;
@@ -300,14 +305,33 @@ export default async function handler(req, res) {
         const hit = _cache.get(ck);
         if (hit && Date.now() < hit.exp) return { id, lineups: hit.data };
         const lineups = await getLineups(id).catch(() => null);
-        if (lineups) _cache.set(ck, { data: lineups, exp: Date.now() + 1_800_000 });
+        if (lineups) _cache.set(ck, { data: lineups, exp: Date.now() + 14_400_000 }); // 4h
         return { id, lineups };
       })
     );
     const lineupsMap = Object.fromEntries(lineupsArr.map(({ id, lineups }) => [id, lineups]));
 
-    // 4. Histórico de corners para TODOS os jogos ao vivo
-    // (Importante: o leagueAvg calibrado melhora a previsão desde o 1ºT)
+    // 4. Histórico OTIMIZADO:
+    //    - Só ligas top (economiza para ligas obscuras que não vamos apostar)
+    //    - last=5 em vez de 8 (economiza 6 req/time)
+    //    - Cache 8h em vez de 1h (médias não mudam ao longo do dia)
+    const TOP_LEAGUES_HIST = new Set([
+      39,40,41,  // England 1/2/3
+      61,62,     // France 1/2
+      135,136,   // Italy 1/2
+      140,141,   // Spain 1/2
+      78,79,     // Germany 1/2
+      94,95,     // Portugal
+      88,89,     // Netherlands
+      203,       // Turkey
+      2,3,4,     // Champions/Europa/Conference
+      128,       // Argentina
+      71,72,     // Brazil 1/2
+      262,239,   // Mexico
+      253,       // MLS
+      106,       // Poland
+    ]);
+
     const historicalArr = await Promise.all(
       liveActive.map(async f => {
         const id  = f.fixture?.id;
@@ -315,9 +339,12 @@ export default async function handler(req, res) {
         const aId = f.teams?.away?.id;
         if (!hId || !aId) return { id, historical: null };
 
+        // Só busca histórico para ligas relevantes para apostas
+        if (!TOP_LEAGUES_HIST.has(f.league?.id)) return { id, historical: null };
+
         const [homeHist, awayHist, h2h] = await Promise.all([
-          getTeamCornerHistory(hId, 8).catch(() => null),
-          getTeamCornerHistory(aId, 8).catch(() => null),
+          getTeamCornerHistory(hId, 5).catch(() => null), // OTIMIZADO: 5 jogos (era 8)
+          getTeamCornerHistory(aId, 5).catch(() => null),
           getH2H(hId, aId).catch(() => null),
         ]);
 
@@ -362,29 +389,33 @@ export default async function handler(req, res) {
     );
     const historicalMap = Object.fromEntries(historicalArr.map(({ id, historical }) => [id, historical]));
 
-    // 5. Odds ao vivo — máximo 8 jogos para poupar quota (prioriza os com mais corners)
-    const sortedByActivity = [...liveActive].sort((a, b) => {
-      const cornA = (statsMap[a.fixture?.id]?.[0]?.statistics?.find(s=>s.type==="Corner Kicks")?.value || 0)
-                  + (statsMap[a.fixture?.id]?.[1]?.statistics?.find(s=>s.type==="Corner Kicks")?.value || 0);
-      const cornB = (statsMap[b.fixture?.id]?.[0]?.statistics?.find(s=>s.type==="Corner Kicks")?.value || 0)
-                  + (statsMap[b.fixture?.id]?.[1]?.statistics?.find(s=>s.type==="Corner Kicks")?.value || 0);
-      return Number(cornB) - Number(cornA);
-    });
-
-    const oddsPromises = sortedByActivity
-      .slice(0, 8) // máximo 8 jogos com maior atividade de corners
-      .map(async f => {
-        const id = f.fixture?.id;
-        const ck = `af_odds_${id}`;
-        const hit = _cache.get(ck);
-        if (hit && Date.now() < hit.exp) return { id, odds: hit.data };
-        const oddsRaw = await getLiveOdds(id).catch(() => null);
-        const odds = parseLiveCornerOdds(oddsRaw);
-        if (odds) _cache.set(ck, { data: odds, exp: Date.now() + 30_000 });
-        return { id, odds };
+    // 5. Odds ao vivo — DESABILITADAS por padrão (maior custo: 960 req/h)
+    //    Para reativar: trocar ODDS_ENABLED para true
+    //    Considere reativar apenas após confirmar que quota é suficiente
+    const ODDS_ENABLED = false;
+    const oddsMap = {};
+    if (ODDS_ENABLED) {
+      const sortedByActivity = [...liveActive].sort((a, b) => {
+        const cornA = (statsMap[a.fixture?.id]?.[0]?.statistics?.find(s=>s.type==="Corner Kicks")?.value || 0)
+                    + (statsMap[a.fixture?.id]?.[1]?.statistics?.find(s=>s.type==="Corner Kicks")?.value || 0);
+        const cornB = (statsMap[b.fixture?.id]?.[0]?.statistics?.find(s=>s.type==="Corner Kicks")?.value || 0)
+                    + (statsMap[b.fixture?.id]?.[1]?.statistics?.find(s=>s.type==="Corner Kicks")?.value || 0);
+        return Number(cornB) - Number(cornA);
       });
-    const oddsArr = await Promise.all(oddsPromises);
-    const oddsMap = Object.fromEntries(oddsArr.map(({ id, odds }) => [id, odds]));
+      const oddsArr = await Promise.all(
+        sortedByActivity.slice(0, 3).map(async f => { // max 3 jogos se reativar
+          const id = f.fixture?.id;
+          const ck = `af_odds_${id}`;
+          const hit = _cache.get(ck);
+          if (hit && Date.now() < hit.exp) return { id, odds: hit.data };
+          const oddsRaw = await getLiveOdds(id).catch(() => null);
+          const odds = parseLiveCornerOdds(oddsRaw);
+          if (odds) _cache.set(ck, { data: odds, exp: Date.now() + 300_000 }); // 5min
+          return { id, odds };
+        })
+      );
+      oddsArr.forEach(({ id, odds }) => { if (odds) oddsMap[id] = odds; });
+    }
 
     // 6. Monta jogos ao vivo
     const allLiveGames = (afLive || [])
