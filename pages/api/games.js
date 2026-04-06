@@ -343,7 +343,7 @@ function normalizeGame(event, league, parsed, isUpcomingGame) {
 // ── API-Football enrichment (opcional — ativa quando APIFOOTBALL_KEY está set) ──
 import {
   getLiveFixtures, getFixtureStats, getFixtureEvents, getLineups,
-  getTeamStats, getH2H, getLiveOdds, searchTeam,
+  getTeamCornerHistory, getH2H, getLiveOdds, searchTeam,
   matchAFFixture, parseStats, parseSubstitutions, parseCornersAvg,
   parseH2HCorners, parseFormations, parseLiveCornerOdds,
   detectOffensiveSubs, formationAttackScore,
@@ -425,35 +425,45 @@ async function enrichWithAF(game, afLiveFixtures) {
       }
     }
 
-    // 6. Dados históricos (team stats + H2H) — em paralelo
-    if (homeTeamId && awayTeamId && leagueId && season) {
-      const [homeStats, awayStats, h2h] = await Promise.all([
-        getTeamStats(homeTeamId, leagueId, season).catch(() => null),
-        getTeamStats(awayTeamId, leagueId, season).catch(() => null),
+    // 6. Dados históricos REAIS de corners (team corner history + H2H)
+    if (homeTeamId && awayTeamId) {
+      const [homeCorners, awayCorners, h2h] = await Promise.all([
+        getTeamCornerHistory(homeTeamId, 8).catch(() => null),
+        getTeamCornerHistory(awayTeamId, 8).catch(() => null),
         getH2H(homeTeamId, awayTeamId).catch(() => null),
       ]);
 
-      const homeCorn = parseCornersAvg(homeStats);
-      const awayCorn = parseCornersAvg(awayStats);
+      const homeCorn = parseCornersAvg(homeCorners, true);   // time da casa jogando em casa
+      const awayCorn = parseCornersAvg(awayCorners, false);  // time de fora jogando fora
       const h2hData  = parseH2HCorners(h2h);
 
       if (homeCorn || awayCorn || h2hData) {
         game.historical = {
-          // Casa jogando em casa vs fora
-          homeCornerAvgHome: homeCorn?.forHome     || null,
-          homeCornerAvgAway: homeCorn?.forAway     || null,
-          awayCornerAvgHome: awayCorn?.forHome     || null,
-          awayCornerAvgAway: awayCorn?.forAway     || null,
-          // Corners sofridos (relevante para projeção total)
-          homeCornerAgstHome: homeCorn?.againstHome || null,
-          awayCornerAgstAway: awayCorn?.againstAway || null,
+          // Médias REAIS de corners das últimas 8 partidas
+          homeCornerAvgHome:  homeCorn?.forHome     ?? null,
+          homeCornerAvgAway:  homeCorn?.forAway     ?? null,
+          awayCornerAvgHome:  awayCorn?.forHome     ?? null,
+          awayCornerAvgAway:  awayCorn?.forAway     ?? null,
+          homeCornerAgstHome: homeCorn?.againstHome ?? null,
+          awayCornerAgstAway: awayCorn?.againstAway ?? null,
+          // Dados brutos para exibição no frontend
+          homeAvgRaw:    homeCorners?.avg   ?? null,
+          awayAvgRaw:    awayCorners?.avg   ?? null,
+          homeGames:     homeCorners?.games ?? 0,
+          awayGames:     awayCorners?.games ?? 0,
+          homeVariance:  homeCorners?.variance ?? null,
+          awayVariance:  awayCorners?.variance ?? null,
+          homeMin:       homeCorners?.min  ?? null,
+          homeMax:       homeCorners?.max  ?? null,
+          awayMin:       awayCorners?.min  ?? null,
+          awayMax:       awayCorners?.max  ?? null,
           // H2H
-          h2hAvgGoals:     h2hData?.avgGoals     || null,
-          h2hEstCorners:   h2hData?.estimatedCorners || null,
-          h2hGames:        h2hData?.games        || 0,
-          // Forma recente
-          homeForm:        homeCorn?.form        || null,
-          awayForm:        awayCorn?.form        || null,
+          h2hAvgGoals:   h2hData?.avgGoals        ?? null,
+          h2hEstCorners: h2hData?.estimatedCorners ?? null,
+          h2hGames:      h2hData?.games            ?? 0,
+          // Forma
+          homeForm: null,
+          awayForm: null,
         };
       }
     }

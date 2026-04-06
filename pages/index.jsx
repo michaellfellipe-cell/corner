@@ -428,24 +428,76 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
             <StatRow label="Amarelos" h={selected.yellowCards?.home} a={selected.yellowCards?.away}/>
             <StatRow label="Impedimentos" h={selected.offsides?.home} a={selected.offsides?.away}/>
 
-            {/* Dados históricos (API-Football) */}
-            {selected.historical?.homeCornerAvgHome && (
+            {/* Dados históricos REAIS (API-Football) */}
+            {(selected.historical?.homeAvgRaw || selected.historical?.awayAvgRaw || selected.historical?.h2hEstCorners) && (
               <>
                 <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#2a3a50", letterSpacing:1.2, margin:"8px 0 6px" }}>
-                  HISTÓRICO · API-FOOTBALL
+                  HISTÓRICO REAL · API-FOOTBALL
                 </div>
-                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6 }}>
-                  {[
-                    { l:`${selected.homeShort} média casa`, v:`${selected.historical.homeCornerAvgHome?.toFixed(1)} esc/jogo`, c:"#00e5a0" },
-                    { l:`${selected.awayShort} média fora`, v:`${selected.historical.awayCornerAvgAway?.toFixed(1)} esc/jogo`, c:"#f0c040" },
-                    ...(selected.historical.h2hEstCorners ? [{ l:"H2H estimado", v:`${selected.historical.h2hEstCorners} esc/jogo`, c:"#c9d6e3" }] : []),
-                    { l:"leagueAvg usado", v:`${(pred.leagueAvgUsed*10).toFixed(2)}/10min`, c:"#3d4f6b" },
-                  ].map((s,i) => (
-                    <div key={i} style={{ background:"#0d1420", borderRadius:6, padding:"6px 8px", border:"1px solid #1a2535" }}>
-                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50", marginBottom:2 }}>{s.l}</div>
-                      <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:14, color:s.c }}>{s.v}</div>
+                {/* Cards de média */}
+                <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:6 }}>
+                  {selected.historical.homeAvgRaw && (
+                    <div style={{ background:"#0d1420", borderRadius:6, padding:"8px 10px", border:"1px solid #1a2535" }}>
+                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50", marginBottom:2 }}>
+                        {selected.homeShort} · últimos {selected.historical.homeGames} jogos
+                      </div>
+                      <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:20, color:"#00e5a0", lineHeight:1 }}>
+                        {selected.historical.homeAvgRaw.toFixed(1)}
+                        <span style={{ fontFamily:"'Space Mono',monospace", fontWeight:400, fontSize:9, color:"#3d4f6b", marginLeft:4 }}>esc/jogo</span>
+                      </div>
+                      {selected.historical.homeMin !== null && (
+                        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b", marginTop:2 }}>
+                          min {selected.historical.homeMin} · max {selected.historical.homeMax}
+                          {selected.historical.homeVariance < 2 && <span style={{ color:"#00e5a088", marginLeft:4 }}>↑ previsível</span>}
+                        </div>
+                      )}
                     </div>
-                  ))}
+                  )}
+                  {selected.historical.awayAvgRaw && (
+                    <div style={{ background:"#0d1420", borderRadius:6, padding:"8px 10px", border:"1px solid #1a2535" }}>
+                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50", marginBottom:2 }}>
+                        {selected.awayShort} · últimos {selected.historical.awayGames} jogos
+                      </div>
+                      <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:20, color:"#f0c040", lineHeight:1 }}>
+                        {selected.historical.awayAvgRaw.toFixed(1)}
+                        <span style={{ fontFamily:"'Space Mono',monospace", fontWeight:400, fontSize:9, color:"#3d4f6b", marginLeft:4 }}>esc/jogo</span>
+                      </div>
+                      {selected.historical.awayMin !== null && (
+                        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b", marginTop:2 }}>
+                          min {selected.historical.awayMin} · max {selected.historical.awayMax}
+                          {selected.historical.awayVariance < 2 && <span style={{ color:"#f0c04088", marginLeft:4 }}>↑ previsível</span>}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {/* Linha inferior: esperado + H2H + leagueAvg */}
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:6 }}>
+                  {selected.historical.homeAvgRaw && selected.historical.awayAvgRaw && (
+                    <div style={{ background:"#0d1420", borderRadius:6, padding:"6px 8px", border:"1px solid #1a2535", textAlign:"center" }}>
+                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50", marginBottom:2 }}>ESPERADO/JOGO</div>
+                      <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:14, color:"#c9d6e3" }}>
+                        ~{(selected.historical.homeAvgRaw * 1.10 + selected.historical.awayAvgRaw * 0.92).toFixed(1)}
+                      </div>
+                    </div>
+                  )}
+                  {selected.historical.h2hEstCorners && (
+                    <div style={{ background:"#0d1420", borderRadius:6, padding:"6px 8px", border:"1px solid #1a2535", textAlign:"center" }}>
+                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50", marginBottom:2 }}>H2H ({selected.historical.h2hGames}j)</div>
+                      <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:14, color:"#c9d6e3" }}>
+                        ~{selected.historical.h2hEstCorners}
+                      </div>
+                    </div>
+                  )}
+                  {pred.leagueAvgUsed && (
+                    <div style={{ background:"#0d1420", borderRadius:6, padding:"6px 8px", border:"1px solid #1a2535", textAlign:"center" }}>
+                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50", marginBottom:2 }}>BASE/10MIN</div>
+                      <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:14, color: pred.hasHistoricalData ? "#00e5a0" : "#3d4f6b" }}>
+                        {(pred.leagueAvgUsed * 10).toFixed(2)}
+                        {pred.hasHistoricalData && <span style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#00e5a066", marginLeft:2 }}>★</span>}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </>
             )}
