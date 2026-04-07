@@ -785,7 +785,7 @@ export default function Home() {
             <div style={{ width:26, height:26, background:"#00e5a0", borderRadius:5, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13 }}>⚽</div>
             <div>
               <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:16, letterSpacing:2 }}>CORNER<span style={{ color:"#00e5a0" }}>EDGE</span></div>
-              {!isMobile && <div style={{ fontFamily:"var(--mono)", fontSize:7, color:"#2a3a50", letterSpacing:1.5 }}>ESPN · 110+ LIGAS</div>}
+              {!isMobile && <div style={{ fontFamily:"var(--mono)", fontSize:7, color:"#2a3a50", letterSpacing:1.5 }}>AF · 1200+ LIGAS</div>}
             </div>
           </div>
 
