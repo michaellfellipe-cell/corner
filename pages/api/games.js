@@ -405,18 +405,11 @@ export default async function handler(req, res) {
     const matched   = espnWithAF.filter(x => x.afFixture !== null);
     const espnOnly  = espnWithAF.filter(x => x.afFixture === null);
 
-    // Jogos AF que o ESPN não descobriu (ligas que ESPN não cobre)
-    const matchedAfIds = new Set(matched.map(x => x.afFixture?.fixture?.id));
-    const afExclusive  = afLiveArr.filter(f => {
-      const s = f.fixture?.status?.short;
-      return ["1H","2H","ET","HT"].includes(s) && !matchedAfIds.has(f.fixture?.id);
-    });
-
-    // Lista de fixtures AF que precisam de stats
-    const liveActive = [
-      ...matched.map(x => x.afFixture),
-      ...afExclusive,
-    ].filter(f => ["1H","2H","ET","HT"].includes(f.fixture?.status?.short));
+    // ESPN é a fonte de verdade: AF só enriquece os jogos que ESPN trouxe
+    // Jogos AF sem match ESPN (ligas fora do ESPN) são ignorados intencionalmente
+    const liveActive = matched
+      .map(x => x.afFixture)
+      .filter(f => ["1H","2H","ET","HT"].includes(f.fixture?.status?.short));
 
     // PASSO 3 — Stats + Lineups + Histórico em paralelo (só fixtures AF)
     const [statsArr, lineupsArr, historicalArr] = await Promise.all([
@@ -521,16 +514,8 @@ export default async function handler(req, res) {
     // 4b. Só ESPN (sem match AF) — mostra jogo, sem análise de stats
     const gamesEspnOnly = espnOnly.map(({ espnGame }) => normalizeEspnOnlyGame(espnGame));
 
-    // 4c. Só AF (ligas que ESPN não cobre)
-    const gamesAfOnly = afExclusive.map(f => {
-      const id   = f.fixture?.id;
-      const game = normalizeAFGame(f, statsMap[id]||null, lineupsMap[id]||null, false);
-      if (historicalMap[id]) game.historical = historicalMap[id];
-      return game;
-    });
-
-    // Ordem de prioridade: matched (completos) → AF exclusivos → ESPN-only (básicos)
-    const allLiveGames = [...gamesMatched, ...gamesAfOnly, ...gamesEspnOnly];
+    // Ordem: matched primeiro (dados completos AF) → ESPN-only (básicos, sem AF)
+    const allLiveGames = [...gamesMatched, ...gamesEspnOnly];
 
     // PASSO 5 — Upcoming
     const now = Date.now();
@@ -583,19 +568,8 @@ export default async function handler(req, res) {
         };
       });
 
-    // 5b. AF upcoming exclusivos (ligas que ESPN não mostra)
-    const afExclusiveUpcoming = afUpcomingArr
-      .filter(f => {
-        const kick = (f.fixture?.timestamp || 0) * 1000;
-        if (kick <= now || kick > now + 24 * 3_600_000) return false;
-        const hn = f.teams?.home?.name || "";
-        const an = f.teams?.away?.name || "";
-        const key = normName(hn) + "_" + normName(an);
-        return !upcomingEspnNorm.has(key);
-      })
-      .map(f => normalizeAFGame(f, null, null, true));
-
-    const upcoming = [...upcomingEspnFull, ...afExclusiveUpcoming]
+    // Upcoming: apenas o que ESPN trouxe (AF só enriquece, não adiciona ligas)
+    const upcoming = [...upcomingEspnFull]
       .sort((a, b) => new Date(a.startTime||0) - new Date(b.startTime||0))
       .slice(0, 100);
 
@@ -611,11 +585,10 @@ export default async function handler(req, res) {
       demo:          false,
       timestamp:     new Date().toISOString(),
       meta: {
-        espnLive:    espnLive.length,
-        afLive:      afLiveArr.length,
-        matched:     matched.length,
-        espnOnly:    espnOnly.length,
-        afExclusive: afExclusive.length,
+        espnLive:  espnLive.length,
+        afLive:    afLiveArr.length,
+        matched:   matched.length,
+        espnOnly:  espnOnly.length,
       },
     });
 
