@@ -26,6 +26,8 @@ import {
   parseFormations, parseH2HCorners,
   detectOffensiveSubs, formationAttackScore,
 } from "../../lib/apifootball.js";
+import { logPrediction, logSnapshot } from "../../lib/supabase.js";
+import { projectCorners }             from "../../lib/predictor.js";
 
 // ── Cache in-memory ────────────────────────────────────────────────────────
 const _cache = new Map();
@@ -173,16 +175,17 @@ function buildGameStats(statsArr) {
     onTarget:         { home: s(0,"Shots on Goal")    ?? 0,    away: s(1,"Shots on Goal")    ?? 0    },
     blockedShots:     { home: s(0,"Blocked Shots")    ?? 0,    away: s(1,"Blocked Shots")    ?? 0    },
     possession:       { home: s(0,"Ball Possession")  ?? 50,   away: s(1,"Ball Possession")  ?? 50   },
-    dangerousAttacks: { home: s(0,"Dangerous Attacks")?? 0,    away: s(1,"Dangerous Attacks")?? 0    },
-    attacks:          { home: s(0,"Attacks")          ?? 0,    away: s(1,"Attacks")          ?? 0    },
-    fouls:            { home: s(0,"Fouls")            ?? 0,    away: s(1,"Fouls")            ?? 0    },
-    yellowCards:      { home: s(0,"Yellow Cards")     ?? 0,    away: s(1,"Yellow Cards")     ?? 0    },
-    saves:            { home: s(0,"Saves")            ?? 0,    away: s(1,"Saves")            ?? 0    },
-    offsides:         { home: s(0,"Offsides")         ?? 0,    away: s(1,"Offsides")         ?? 0    },
-    passes:           { home: s(0,"Total passes")     ?? 0,    away: s(1,"Total passes")     ?? 0    },
-    accuratePasses:   { home: s(0,"Passes accurate")  ?? 0,    away: s(1,"Passes accurate")  ?? 0    },
-    crosses:          { home: s(0,"Total Crosses")    ?? null, away: s(1,"Total Crosses")    ?? null },
-    dangerousAttacksReal: true,
+    dangerousAttacks: { home: s(0,"Dangerous Attacks"), away: s(1,"Dangerous Attacks") },
+    attacks:          { home: s(0,"Attacks"),           away: s(1,"Attacks")           },
+    fouls:            { home: s(0,"Fouls")            ?? 0, away: s(1,"Fouls")            ?? 0 },
+    yellowCards:      { home: s(0,"Yellow Cards")     ?? 0, away: s(1,"Yellow Cards")     ?? 0 },
+    saves:            { home: s(0,"Saves")            ?? 0, away: s(1,"Saves")            ?? 0 },
+    offsides:         { home: s(0,"Offsides")         ?? 0, away: s(1,"Offsides")         ?? 0 },
+    passes:           { home: s(0,"Total passes")     ?? 0, away: s(1,"Total passes")     ?? 0 },
+    accuratePasses:   { home: s(0,"Passes accurate")  ?? 0, away: s(1,"Passes accurate")  ?? 0 },
+    crosses:          { home: s(0,"Total Crosses"),    away: s(1,"Total Crosses")         },
+    // dangerousAttacksReal: só true se AF realmente retornou valores (não null)
+    dangerousAttacksReal: s(0,"Dangerous Attacks") !== null || s(1,"Dangerous Attacks") !== null,
   };
 }
 
@@ -344,88 +347,134 @@ export default async function handler(req, res) {
       ["1H","2H","ET","HT"].includes(f.fixture?.status?.short)
     );
 
-    // 3. Stats + Lineups + Histórico em paralelo
-    const [statsArr, lineupsArr, historicalArr] = await Promise.all([
+    // 3. Busca stats, lineups e histórico
+    // PRIORIDADE: stats (crítico para análise) → lineups → histórico
+    // CONCORRÊNCIA: limitada para evitar rate-limiting da AF
+    // Stats são buscadas em lotes de 6 para não saturar a API
 
-      // Stats por jogo (cache 4min)
-      Promise.all(liveActive.map(async f => {
-        const id  = f.fixture?.id;
-        const ck  = `af_stats_${id}`;
-        const hit = cacheGet(ck);
-        if (hit) return { id, stats: hit };
-        const stats = await getFixtureStats(id).catch(() => null);
-        if (stats) cacheSet(ck, stats, 240_000);
-        return { id, stats };
-      })),
+    // Helper: executa em lotes para limitar concorrência
+    async function batchedFetch(items, fn, batchSize = 6) {
+      const results = [];
+      for (let i = 0; i < items.length; i += batchSize) {
+        const batch = items.slice(i, i + batchSize);
+        const batchResults = await Promise.all(batch.map(fn));
+        results.push(...batchResults);
+      }
+      return results;
+    }
 
-      // Lineups (cache 4h)
-      Promise.all(liveActive.map(async f => {
-        const id  = f.fixture?.id;
-        const ck  = `af_lineups_${id}`;
-        const hit = cacheGet(ck);
-        if (hit) return { id, lineups: hit };
-        const lineups = await getLineups(id).catch(() => null);
-        if (lineups) cacheSet(ck, lineups, 14_400_000);
-        return { id, lineups };
-      })),
+    // Stats: lotes de 6 (crítico — sem stats não há análise)
+    const statsArr = await batchedFetch(liveActive, async f => {
+      const id  = f.fixture?.id;
+      const ck  = `af_stats_${id}`;
+      const hit = cacheGet(ck);
+      if (hit) return { id, stats: hit };
+      const stats = await getFixtureStats(id).catch(() => null);
+      if (stats) cacheSet(ck, stats, 240_000); // 4min
+      return { id, stats };
+    }, 6);
 
-      // Histórico — só top leagues (cache 8h)
-      Promise.all(liveActive.map(async f => {
-        const id  = f.fixture?.id;
-        const hId = f.teams?.home?.id;
-        const aId = f.teams?.away?.id;
-        if (!hId || !aId || !TOP_LEAGUES_HIST.has(f.league?.id)) return { id, historical: null };
+    // Lineups: lotes de 4 (menos crítico, cache 4h)
+    const lineupsArr = await batchedFetch(liveActive, async f => {
+      const id  = f.fixture?.id;
+      const ck  = `af_lineups_${id}`;
+      const hit = cacheGet(ck);
+      if (hit) return { id, lineups: hit };
+      const lineups = await getLineups(id).catch(() => null);
+      if (lineups) cacheSet(ck, lineups, 14_400_000); // 4h
+      return { id, lineups };
+    }, 4);
 
-        const [homeHist, awayHist, h2h] = await Promise.all([
-          (async () => { const ck=`af_ch_${hId}_5`; const h=cacheGet(ck); if(h) return h; return getTeamCornerHistory(hId,5).catch(()=>null); })(),
-          (async () => { const ck=`af_ch_${aId}_5`; const h=cacheGet(ck); if(h) return h; return getTeamCornerHistory(aId,5).catch(()=>null); })(),
-          getH2H(hId, aId).catch(() => null),
+    // Histórico: só para jogos em top leagues E só se já estiver em cache
+    // (evita explosão de requests em cold start — será preenchido gradualmente)
+    const historicalArr = await Promise.all(liveActive.map(async f => {
+      const id  = f.fixture?.id;
+      const hId = f.teams?.home?.id;
+      const aId = f.teams?.away?.id;
+      if (!hId || !aId || !TOP_LEAGUES_HIST.has(f.league?.id)) return { id, historical: null };
+
+      // Verifica cache antes de fazer qualquer request
+      const hCk = `af_ch_${hId}_5`;
+      const aCk = `af_ch_${aId}_5`;
+      const hHit = cacheGet(hCk);
+      const aHit = cacheGet(aCk);
+
+      // Se nenhum dos dois estiver em cache, pula histórico desta chamada
+      // Será buscado na próxima quando o cache estiver quente
+      if (!hHit && !aHit) {
+        // Inicia busca em background (não bloqueia resposta atual)
+        Promise.all([
+          getTeamCornerHistory(hId, 5).then(r => { if(r) cacheSet(hCk, r, 28_800_000); }).catch(()=>{}),
+          getTeamCornerHistory(aId, 5).then(r => { if(r) cacheSet(aCk, r, 28_800_000); }).catch(()=>{}),
         ]);
+        return { id, historical: null };
+      }
 
-        const toCorner = hist => hist ? {
-          forHome: +(hist.avg*1.10).toFixed(2), forAway: +(hist.avg*0.94).toFixed(2),
-          againstHome:0, againstAway:0, avg:hist.avg, games:hist.games,
-          variance:hist.variance, min:hist.min, max:hist.max,
-        } : null;
+      // Ao menos um está em cache — busca o que falta
+      const [homeHist, awayHist, h2h] = await Promise.all([
+        hHit ? Promise.resolve(hHit) : getTeamCornerHistory(hId, 5).then(r => { if(r) cacheSet(hCk, r, 28_800_000); return r; }).catch(()=>null),
+        aHit ? Promise.resolve(aHit) : getTeamCornerHistory(aId, 5).then(r => { if(r) cacheSet(aCk, r, 28_800_000); return r; }).catch(()=>null),
+        getH2H(hId, aId).catch(() => null),
+      ]);
 
-        const hc = toCorner(homeHist);
-        const ac = toCorner(awayHist);
-        const h2hData = parseH2HCorners(h2h);
+      const toCorner = hist => hist ? {
+        forHome: +(hist.avg*1.10).toFixed(2), forAway: +(hist.avg*0.94).toFixed(2),
+        againstHome:0, againstAway:0, avg:hist.avg, games:hist.games,
+        variance:hist.variance, min:hist.min, max:hist.max,
+      } : null;
 
-        return {
-          id,
-          historical: (hc||ac||h2hData) ? {
-            homeCornerAvgHome:  hc?.forHome  ?? null,
-            homeCornerAvgAway:  hc?.forAway  ?? null,
-            awayCornerAvgHome:  ac?.forHome  ?? null,
-            awayCornerAvgAway:  ac?.forAway  ?? null,
-            homeCornerAgstHome: 0, awayCornerAgstAway: 0,
-            homeAvgRaw: homeHist?.avg ?? null, awayAvgRaw: awayHist?.avg ?? null,
-            homeGames:  homeHist?.games ?? 0,  awayGames:  awayHist?.games ?? 0,
-            homeVariance: homeHist?.variance ?? null, awayVariance: awayHist?.variance ?? null,
-            homeMin: homeHist?.min ?? null, homeMax: homeHist?.max ?? null,
-            awayMin: awayHist?.min ?? null, awayMax: awayHist?.max ?? null,
-            h2hAvgGoals:   h2hData?.avgGoals ?? null,
-            h2hEstCorners: h2hData?.estimatedCorners ?? null,
-            h2hGames:      h2hData?.games ?? 0,
-            homeForm: null, awayForm: null,
-          } : null,
-        };
-      })),
+      const hc = toCorner(homeHist);
+      const ac = toCorner(awayHist);
+      const h2hData = parseH2HCorners(h2h);
 
-    ]);
+      return {
+        id,
+        historical: (hc||ac||h2hData) ? {
+          homeCornerAvgHome:  hc?.forHome  ?? null,
+          homeCornerAvgAway:  hc?.forAway  ?? null,
+          awayCornerAvgHome:  ac?.forHome  ?? null,
+          awayCornerAvgAway:  ac?.forAway  ?? null,
+          homeCornerAgstHome: 0, awayCornerAgstAway: 0,
+          homeAvgRaw: homeHist?.avg ?? null, awayAvgRaw: awayHist?.avg ?? null,
+          homeGames:  homeHist?.games ?? 0,  awayGames:  awayHist?.games ?? 0,
+          homeVariance: homeHist?.variance ?? null, awayVariance: awayHist?.variance ?? null,
+          homeMin: homeHist?.min ?? null, homeMax: homeHist?.max ?? null,
+          awayMin: awayHist?.min ?? null, awayMax: awayHist?.max ?? null,
+          h2hAvgGoals:   h2hData?.avgGoals ?? null,
+          h2hEstCorners: h2hData?.estimatedCorners ?? null,
+          h2hGames:      h2hData?.games ?? 0,
+          homeForm: null, awayForm: null,
+        } : null,
+      };
+    }));
 
     const statsMap      = Object.fromEntries(statsArr    .map(({id,stats})      => [id, stats]));
     const lineupsMap    = Object.fromEntries(lineupsArr  .map(({id,lineups})    => [id, lineups]));
     const historicalMap = Object.fromEntries(historicalArr.map(({id,historical})=> [id, historical]));
 
-    // 4. Monta jogos ao vivo
+    // 4. Monta jogos ao vivo + loga predições no Supabase (fire-and-forget)
     const games = liveActive.map(f => {
       const id   = f.fixture?.id;
       const game = normalizeAFGame(f, statsMap[id]||null, lineupsMap[id]||null, false);
       if (historicalMap[id]) game.historical = historicalMap[id];
       return game;
     });
+
+    // Log assíncrono — não bloqueia a resposta, não gera erro se Supabase offline
+    if (process.env.SUPABASE_URL) {
+      Promise.all(games.map(async game => {
+        // Snapshot temporal do estado do jogo
+        logSnapshot(game).catch(() => null);
+
+        // Log de predição apenas para sinais relevantes (STRONG/MODERATE)
+        try {
+          const pred = projectCorners(game);
+          if (pred && pred.signal !== "WEAK") {
+            logPrediction(game, pred).catch(() => null);
+          }
+        } catch {}
+      })).catch(() => null);
+    }
 
     // 5. Upcoming
     const now = Date.now();

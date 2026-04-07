@@ -5,8 +5,13 @@
   "installCommand": "npm install",
   "regions": ["gru1"],
   "functions": {
-    "pages/api/games.js": {
-      "maxDuration": 30
+    "pages/api/games.js": { "maxDuration": 30 },
+    "pages/api/cron.js":  { "maxDuration": 30 }
+  },
+  "crons": [
+    {
+      "path":     "/api/cron",
+      "schedule": "*/5 * * * *"
     }
-  }
+  ]
 }

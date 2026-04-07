@@ -646,6 +646,90 @@ function isHot(pred) {
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
+// ── StatsPanel: Dashboard de performance do Supabase ─────────────────────────
+function StatsPanel({ data, loading }) {
+  if (loading) return (
+    <div style={{ textAlign:"center", padding:40, fontFamily:"var(--mono)", fontSize:10, color:"#2a3a50" }}>
+      Carregando estatísticas...
+    </div>
+  );
+  if (!data) return (
+    <div style={{ textAlign:"center", padding:40, fontFamily:"var(--mono)", fontSize:10, color:"#2a3a50" }}>
+      Supabase não configurado ou sem dados ainda.
+    </div>
+  );
+
+  const summary = data.summary || [];
+  const byLeague = data.byLeague || [];
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
+      <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:14, letterSpacing:2, color:"#f0c040" }}>
+        PERFORMANCE
+      </div>
+
+      {/* Por faixa de confiança */}
+      <div style={{ background:"#060a14", borderRadius:10, padding:14, border:"1px solid #141e2e" }}>
+        <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#2a3a50", marginBottom:10, letterSpacing:1.5 }}>
+          POR FAIXA DE CONFIANÇA
+        </div>
+        {summary.length === 0 && (
+          <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#2a3a50" }}>Sem dados ainda</div>
+        )}
+        {summary.map((row, i) => (
+          <div key={i} style={{
+            display:"flex", justifyContent:"space-between", alignItems:"center",
+            padding:"6px 0", borderBottom:"1px solid #0d1420",
+          }}>
+            <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b" }}>{row.confidence_range}</div>
+            <div style={{ display:"flex", gap:16, alignItems:"center" }}>
+              <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#2a3a50" }}>{row.total} jogos</span>
+              <span style={{
+                fontFamily:"var(--display)", fontWeight:700, fontSize:13,
+                color: row.win_rate_pct >= 65 ? "#00e5a0" : row.win_rate_pct >= 50 ? "#f0c040" : "#ff4560",
+              }}>
+                {row.win_rate_pct ?? "—"}%
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Por liga */}
+      {byLeague.length > 0 && (
+        <div style={{ background:"#060a14", borderRadius:10, padding:14, border:"1px solid #141e2e" }}>
+          <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#2a3a50", marginBottom:10, letterSpacing:1.5 }}>
+            TOP LIGAS
+          </div>
+          {byLeague.slice(0, 8).map((row, i) => (
+            <div key={i} style={{
+              display:"flex", justifyContent:"space-between", alignItems:"center",
+              padding:"5px 0", borderBottom:"1px solid #0d1420",
+            }}>
+              <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                {row.league_name}
+              </div>
+              <div style={{ display:"flex", gap:12, alignItems:"center", flexShrink:0 }}>
+                <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#2a3a50" }}>{row.total}</span>
+                <span style={{
+                  fontFamily:"var(--display)", fontWeight:700, fontSize:12,
+                  color: row.win_rate_pct >= 65 ? "#00e5a0" : row.win_rate_pct >= 50 ? "#f0c040" : "#ff4560",
+                }}>
+                  {row.win_rate_pct ?? "—"}%
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ fontFamily:"var(--mono)", fontSize:7, color:"#1a2535", textAlign:"center", paddingTop:4 }}>
+        Registre resultados via app para acumular dados
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [games, setGames]       = useState([]);
   const [upcoming, setUpcoming] = useState([]);
@@ -659,6 +743,8 @@ export default function Home() {
   const [lastUpdate, setLastUpdate] = useState(null);
   const [tab, setTab]           = useState("live");
   const [mobileView, setMobileView] = useState("list"); // "list" | "detail"
+  const [statsData,    setStatsData]    = useState(null);
+  const [statsLoading, setStatsLoading] = useState(false);
 
   const isMobile = useIsMobile();
   const prevSigs    = useRef({});
@@ -677,6 +763,16 @@ export default function Home() {
 
   const handleBack = useCallback(() => {
     setMobileView("list");
+  }, []);
+
+  const fetchStats = useCallback(async () => {
+    setStatsLoading(true);
+    try {
+      const r = await fetch("/api/bets?action=stats");
+      const d = await r.json();
+      setStatsData(d);
+    } catch {}
+    setStatsLoading(false);
   }, []);
 
   const fetchGames = useCallback(async () => {
@@ -920,6 +1016,13 @@ export default function Home() {
           </div>
         )}
 
+        {/* Stats Panel — mobile */}
+        {isMobile && mobileView === "stats" && (
+          <div style={{ padding:"16px 12px 100px", maxHeight:"calc(100vh - 80px)", overflowY:"auto" }}>
+            <StatsPanel data={statsData} loading={statsLoading} />
+          </div>
+        )}
+
         {/* Mobile bottom bar */}
         {isMobile && (
           <div style={{
@@ -942,6 +1045,13 @@ export default function Home() {
             }}>
               <span style={{ fontSize:16 }}>📊</span>
               <span style={{ fontFamily:"var(--mono)", fontSize:7 }}>ANÁLISE</span>
+            </button>
+            <button onClick={() => { setMobileView("stats"); fetchStats(); }} style={{
+              background:"none", border:"none", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3,
+              color: mobileView==="stats" ? "#f0c040" : "#2a3a50",
+            }}>
+              <span style={{ fontSize:16 }}>🏆</span>
+              <span style={{ fontFamily:"var(--mono)", fontSize:7 }}>STATS</span>
             </button>
           </div>
         )}
