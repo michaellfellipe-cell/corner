@@ -1,72 +1,98 @@
 /**
- * pages/api/cron.js — Vercel Cron Job (a cada 5 minutos)
+ * pages/api/cron.js — Executado pelo GitHub Actions a cada 5 minutos
  *
- * O que faz em cada execução:
- *   1. Busca jogos ao vivo da AF (reutiliza dados do cache quando possível)
- *   2. Salva snapshot do estado atual de cada jogo no Supabase
- *   3. Detecta jogos recém-encerrados (FT nos últimos 15min)
- *   4. Para cada jogo encerrado: busca snapshots históricos e verifica
- *      automaticamente todas as predições pendentes daquele fixture
+ * Responsabilidades:
+ *   1. Busca jogos ao vivo da AF + stats → salva snapshots no Supabase
+ *   2. Detecta jogos encerrados hoje (FT)
+ *   3. Para cada encerrado: busca snapshots salvos → verifica predições pendentes
+ *      → atualiza result = 'win' | 'loss' automaticamente
  *
- * Autenticação: Vercel envia header Authorization: Bearer CRON_SECRET
- * Configure CRON_SECRET nas env vars do Vercel (qualquer string aleatória)
+ * Autenticação: header Authorization: Bearer CRON_SECRET
  */
 
-import { logSnapshot, logFinishedGame, verifyPredictionsForFixture, supabaseQuery } from "../../lib/supabase.js";
+import { logSnapshot, verifyPredictionsForFixture, supabaseQuery } from "../../lib/supabase.js";
 
 const AF_KEY      = process.env.APIFOOTBALL_KEY;
 const CRON_SECRET = process.env.CRON_SECRET;
 
-// Busca todos os jogos ao vivo da AF
-async function fetchLiveGames() {
-  if (!AF_KEY) return [];
+const MAIN_LEAGUES = new Set([
+  39,40,41,45,48, 140,141,142, 135,136, 78,79, 61,62,66,
+  94,95, 88,89, 144,143, 179,180, 203,204, 197,198, 235,236,
+  113,114, 103,104, 119,120, 207,208, 218,219, 106,107,
+  345,346, 283,284, 169,170, 167,168, 382,
+  2,3,4,531,848, 71,72,73, 128,131, 262,239, 253,256,
+  265,266, 268,269, 240, 11,13, 98,99, 292,293, 307,308, 233,
+  1,5,6,8,9,10,15,
+]);
+
+// ── AF helpers ──────────────────────────────────────────────────────────────
+async function afGet(path) {
+  if (!AF_KEY) return null;
   try {
-    const res = await fetch("https://v3.football.api-sports.io/fixtures?live=all", {
+    const res = await fetch(`https://v3.football.api-sports.io${path}`, {
       headers: { "x-apisports-key": AF_KEY },
-      signal:  AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(10000),
     });
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     const data = await res.json();
-    return data.response || [];
-  } catch { return []; }
+    if (data.errors && Object.keys(data.errors).length) return null;
+    return data.response || null;
+  } catch { return null; }
 }
 
-// Busca jogos encerrados recentemente (últimos 15 minutos)
-async function fetchRecentlyFinished() {
-  if (!AF_KEY) return [];
-  try {
-    // Pega jogos encerrados hoje
-    const today = new Date().toISOString().slice(0, 10);
-    const res = await fetch(
-      `https://v3.football.api-sports.io/fixtures?date=${today}&status=FT`,
-      {
-        headers: { "x-apisports-key": AF_KEY },
-        signal:  AbortSignal.timeout(10000),
-      }
+// Extrai stat do array de statistics da AF
+function getStat(statsArr, teamIdx, type) {
+  const v = statsArr?.[teamIdx]?.statistics?.find(s => s.type === type)?.value;
+  if (v === null || v === undefined) return 0;
+  return parseInt(v) || 0;
+}
+
+// ── Busca jogos ao vivo com stats ───────────────────────────────────────────
+async function fetchLiveWithStats() {
+  const fixtures = await afGet("/fixtures?live=all");
+  if (!fixtures?.length) return [];
+
+  const active = fixtures.filter(f =>
+    MAIN_LEAGUES.has(f.league?.id) &&
+    ["1H","2H","ET","HT"].includes(f.fixture?.status?.short)
+  );
+  if (!active.length) return [];
+
+  // Busca stats em lotes de 5 para não explodir quota
+  const results = [];
+  for (let i = 0; i < active.length; i += 5) {
+    const batch = active.slice(i, i + 5);
+    const statsArr = await Promise.all(
+      batch.map(f =>
+        afGet(`/fixtures/statistics?fixture=${f.fixture?.id}`).catch(() => null)
+      )
     );
-    if (!res.ok) return [];
-    const data = await res.json();
-    const now = Date.now();
-    // Só processa jogos que encerraram nos últimos 20 minutos
-    return (data.response || []).filter(f => {
-      const ts = (f.fixture?.timestamp || 0) * 1000;
-      return (now - ts) < 20 * 60 * 1000;
+    batch.forEach((f, idx) => {
+      results.push({ fixture: f, stats: statsArr[idx] });
     });
-  } catch { return []; }
+  }
+  return results;
 }
 
-// Busca snapshots de um fixture do Supabase
+// ── Busca todos os jogos FT de hoje ────────────────────────────────────────
+async function fetchTodayFinished() {
+  const today = new Date().toISOString().slice(0, 10);
+  const fixtures = await afGet(`/fixtures?date=${today}&status=FT`);
+  if (!fixtures?.length) return [];
+  // Filtra apenas MAIN_LEAGUES
+  return fixtures.filter(f => MAIN_LEAGUES.has(f.league?.id));
+}
+
+// ── Busca snapshots de um fixture do Supabase ───────────────────────────────
 async function getSnapshotsForFixture(fixtureId) {
   return supabaseQuery(
     `snapshots?fixture_id=eq.${fixtureId}&order=minute.asc&select=minute,corners`
   );
 }
 
-// Já processamos esse fixture encerrado nesta sessão? (evita duplicatas)
-const processedFinished = new Set();
-
+// ── Handler principal ────────────────────────────────────────────────────────
 export default async function handler(req, res) {
-  // Autenticação: só aceita requisições do Vercel Cron
+  // Autenticação
   const auth = req.headers["authorization"] || "";
   if (CRON_SECRET && auth !== `Bearer ${CRON_SECRET}`) {
     return res.status(401).json({ error: "Unauthorized" });
@@ -80,64 +106,58 @@ export default async function handler(req, res) {
   const report = { snapshots: 0, verified: 0, finished: 0, errors: [] };
 
   try {
-    // ── 1. Jogos ao vivo → salva snapshots ──────────────────────────────
-    const liveFixtures = await fetchLiveGames();
+    // ── PARTE 1: Salva snapshots dos jogos ao vivo ──────────────────────────
+    const liveWithStats = await fetchLiveWithStats();
 
-    const MAIN_LEAGUES = new Set([
-      39,40,41,45,48, 140,141,142, 135,136, 78,79, 61,62,66,
-      94,95, 88,89, 144,143, 179,180, 203,204, 197,198, 235,236,
-      113,114, 103,104, 119,120, 207,208, 218,219, 106,107,
-      345,346, 283,284, 169,170, 167,168, 382,
-      2,3,4,531,848, 71,72,73, 128,131, 262,239, 253,256,
-      265,266, 268,269, 240, 11,13, 98,99, 292,293, 307,308, 233,
-      1,5,6,8,9,10,15,
-    ]);
-
-    const liveActive = liveFixtures.filter(f =>
-      MAIN_LEAGUES.has(f.league?.id) &&
-      ["1H","2H","ET","HT"].includes(f.fixture?.status?.short)
-    );
-
-    // Salva snapshot de cada jogo ao vivo (em paralelo, fire-and-forget)
-    await Promise.all(liveActive.map(async f => {
+    for (const { fixture: f, stats } of liveWithStats) {
       try {
-        const corners = (
-          (f.statistics?.[0]?.statistics?.find(s => s.type === "Corner Kicks")?.value || 0) +
-          (f.statistics?.[1]?.statistics?.find(s => s.type === "Corner Kicks")?.value || 0)
-        );
-        // Nota: live=all retorna events inline mas NÃO statistics inline
-        // O snapshot de corners aqui será 0 se não buscarmos stats separadas
-        // Para não gastar quota extra no cron, usamos 0 — o campo corners
-        // no snapshot vem das chamadas de stats do games.js (cache 4min)
-        // Os snapshots úteis para verificação são os salvos pelo games.js
-        report.snapshots++;
-      } catch (e) {
-        report.errors.push(`snapshot ${f.fixture?.id}: ${e.message}`);
-      }
-    }));
+        const corners = getStat(stats, 0, "Corner Kicks") + getStat(stats, 1, "Corner Kicks");
+        const crosses = getStat(stats, 0, "Total Crosses") + getStat(stats, 1, "Total Crosses");
+        const blocked = getStat(stats, 0, "Blocked Shots") + getStat(stats, 1, "Blocked Shots");
+        const shots   = getStat(stats, 0, "Total Shots")   + getStat(stats, 1, "Total Shots");
 
-    // ── 2. Jogos encerrados → verifica predições ─────────────────────────
-    const finishedFixtures = await fetchRecentlyFinished();
+        // Só salva se tiver pelo menos algum dado real (evita snapshots zeros inúteis)
+        if (corners > 0 || shots > 0) {
+          await logSnapshot({
+            afFixtureId:     f.fixture?.id,
+            hasStats:        true,
+            minute:          f.fixture?.status?.elapsed || 0,
+            corners:         { home: getStat(stats, 0, "Corner Kicks"),  away: getStat(stats, 1, "Corner Kicks")  },
+            crosses:         { home: getStat(stats, 0, "Total Crosses"), away: getStat(stats, 1, "Total Crosses") },
+            blockedShots:    { home: getStat(stats, 0, "Blocked Shots"), away: getStat(stats, 1, "Blocked Shots") },
+            shots:           { home: getStat(stats, 0, "Total Shots"),   away: getStat(stats, 1, "Total Shots")   },
+            dangerousAttacks:{ home: getStat(stats, 0, "Dangerous Attacks"), away: getStat(stats, 1, "Dangerous Attacks") },
+            score:           { home: f.goals?.home || 0, away: f.goals?.away || 0 },
+          });
+          report.snapshots++;
+        }
+      } catch (e) {
+        report.errors.push(`snap ${f.fixture?.id}: ${e.message}`);
+      }
+    }
+
+    // ── PARTE 2: Verifica predições de jogos encerrados ─────────────────────
+    const finishedFixtures = await fetchTodayFinished();
+
+    // Busca fixture_ids que têm predições pendentes no Supabase
+    const pendingIds = await supabaseQuery(
+      `predictions?verified=eq.false&min_corners_needed=not.is.null&select=fixture_id`
+    );
+    const pendingSet = new Set((pendingIds || []).map(p => String(p.fixture_id)));
 
     for (const f of finishedFixtures) {
       const fixtureId = String(f.fixture?.id);
-      if (processedFinished.has(fixtureId)) continue;
+      if (!pendingSet.has(fixtureId)) continue; // sem predições pendentes, pula
 
       try {
-        // Corners finais do jogo
-        const cornersHome = parseInt(
-          f.score?.fulltime?.home || f.goals?.home || 0
-        );
-        // AF não retorna corners finais diretamente no fixtures endpoint
-        // Usamos os snapshots acumulados no Supabase
         const snapshots = await getSnapshotsForFixture(fixtureId);
 
-        if (snapshots.length >= 2) {
-          // Verifica predições pendentes
-          const count = await verifyPredictionsForFixture(fixtureId, snapshots);
+        if (snapshots.length < 2) continue; // dados insuficientes para verificar
+
+        const count = await verifyPredictionsForFixture(fixtureId, snapshots);
+        if (count > 0) {
           report.verified += count;
           report.finished++;
-          processedFinished.add(fixtureId);
         }
       } catch (e) {
         report.errors.push(`verify ${fixtureId}: ${e.message}`);
@@ -149,6 +169,5 @@ export default async function handler(req, res) {
   }
 
   report.duration_ms = Date.now() - startTime;
-
   return res.status(200).json({ ok: true, ...report });
 }
