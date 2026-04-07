@@ -842,7 +842,7 @@ export default function Home() {
 
   useEffect(() => {
     fetchGames();
-    intervalRef.current = setInterval(fetchGames, 60000); // OTIMIZADO: 60s (era 30s)
+    intervalRef.current = setInterval(fetchGames, 15000); // v36: 15s (75k/dia)
     return () => clearInterval(intervalRef.current);
   }, [fetchGames]);
 

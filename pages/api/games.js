@@ -1,28 +1,29 @@
 /**
- * pages/api/games.js — v32 (AF-Primary, MAIN_LEAGUES filter)
+ * pages/api/games.js — v36 (AF Ultra 75.000/dia)
  *
- * ARQUITETURA LIMPA:
- *   AF /fixtures?live=all  → todos os jogos ao vivo, filtrado por MAIN_LEAGUES
- *   AF /fixtures/statistics → stats reais (cache 4min)
- *   AF /fixtures/lineups   → formações (cache 4h)
- *   AF histórico           → top leagues (cache 8h)
- *   AF upcoming            → hoje + amanhã, filtrado por MAIN_LEAGUES (cache 15min)
+ * UPGRADES v36:
+ *   - Poll frontend: 60s → 15s
+ *   - live=all cache: 30s → 15s
+ *   - Stats cache: 4min → 90s  (dados mais frescos)
+ *   - Histórico: lazy → completo (sem lazy loading)
+ *   - Batch stats: 6 → 10 por lote
+ *   - Odds ao vivo: reativadas (top 5 jogos, cache 30s)
  *
- * SEM ESPN. Sem matching. Sem aliases. Sem stats falsas.
- * Só aparecem jogos onde AF tem stats reais.
- *
- * Quota AF Pro (7.500/dia):
- *   live=all  (cache 30s):          120/h
- *   stats (25 jogos, cache 4min):   375/h
- *   lineups (cache 4h):               ~1/h
- *   upcoming (cache 15min):            8/h  (2 req × 4)
- *   histórico (cache 8h):              ~2/h
- *   Total:                          ~506/h = ~4.800/dia ✅
+ * Quota AF Ultra (75.000/dia):
+ *   live=all  (cache 15s):           240/h
+ *   stats (50 jogos, cache 90s):   2.000/h
+ *   odds (top 5, cache 30s):         600/h
+ *   lineups (cache 4h):                ~2/h
+ *   upcoming (cache 15min):             8/h
+ *   histórico (cache 8h):              10/h
+ *   Total:                          ~2.860/h = ~27.000/dia ✅
+ *   Margem restante: 48.000 req/dia
  */
 
 import {
   getLiveFixtures, getFixtureStats, getLineups,
   getTeamCornerHistory, getH2H,
+  getLiveOdds, parseLiveCornerOdds,
   parseFormations, parseH2HCorners,
   detectOffensiveSubs, formationAttackScore,
 } from "../../lib/apifootball.js";
@@ -369,22 +370,22 @@ export default async function handler(req, res) {
       return results;
     }
 
-    // Stats: lotes de 6 (crítico — sem stats não há análise)
+    // Stats: lotes de 10 — 75k/dia permite concorrência maior
     const statsArr = await batchedFetch(liveActive, async f => {
       const id  = f.fixture?.id;
-      const ck  = `gm_stats_${id}`;     // prefixo gm_ para não colidir com apifootball.js
-      const nk  = `gm_stats_${id}_null`; // cache negativo
+      const ck  = `gm_stats_${id}`;
+      const nk  = `gm_stats_${id}_null`;
       const hit = cacheGet(ck);
       if (hit !== null) return { id, stats: hit };
-      if (cacheGet(nk) !== null) return { id, stats: null }; // ainda em cooldown
+      if (cacheGet(nk) !== null) return { id, stats: null };
       const stats = await getFixtureStats(id).catch(() => null);
       if (stats !== null) {
-        cacheSet(ck, stats, 240_000); // 4min — sucesso
+        cacheSet(ck, stats, 90_000);  // 90s (era 4min) — dados mais frescos
       } else {
-        cacheSet(nk, true, 90_000);   // 90s — evita retry imediato
+        cacheSet(nk, true, 90_000);
       }
       return { id, stats };
-    }, 6);
+    }, 10);
 
     // Lineups: lotes de 4 (menos crítico, cache 4h)
     const lineupsArr = await batchedFetch(liveActive, async f => {
@@ -397,35 +398,20 @@ export default async function handler(req, res) {
       return { id, lineups };
     }, 4);
 
-    // Histórico: só para jogos em top leagues E só se já estiver em cache
-    // (evita explosão de requests em cold start — será preenchido gradualmente)
+    // Histórico: sempre busca para top leagues (75k/dia permite sem lazy loading)
     const historicalArr = await Promise.all(liveActive.map(async f => {
       const id  = f.fixture?.id;
       const hId = f.teams?.home?.id;
       const aId = f.teams?.away?.id;
       if (!hId || !aId || !TOP_LEAGUES_HIST.has(f.league?.id)) return { id, historical: null };
 
-      // Verifica cache antes de fazer qualquer request
       const hCk = `af_ch_${hId}_5`;
       const aCk = `af_ch_${aId}_5`;
-      const hHit = cacheGet(hCk);
-      const aHit = cacheGet(aCk);
 
-      // Se nenhum dos dois estiver em cache, pula histórico desta chamada
-      // Será buscado na próxima quando o cache estiver quente
-      if (!hHit && !aHit) {
-        // Inicia busca em background (não bloqueia resposta atual)
-        Promise.all([
-          getTeamCornerHistory(hId, 5).then(r => { if(r) cacheSet(hCk, r, 28_800_000); }).catch(()=>{}),
-          getTeamCornerHistory(aId, 5).then(r => { if(r) cacheSet(aCk, r, 28_800_000); }).catch(()=>{}),
-        ]);
-        return { id, historical: null };
-      }
-
-      // Ao menos um está em cache — busca o que falta
+      // Busca tudo em paralelo — sem lazy loading
       const [homeHist, awayHist, h2h] = await Promise.all([
-        hHit ? Promise.resolve(hHit) : getTeamCornerHistory(hId, 5).then(r => { if(r) cacheSet(hCk, r, 28_800_000); return r; }).catch(()=>null),
-        aHit ? Promise.resolve(aHit) : getTeamCornerHistory(aId, 5).then(r => { if(r) cacheSet(aCk, r, 28_800_000); return r; }).catch(()=>null),
+        (async () => { const h=cacheGet(hCk); if(h) return h; const r=await getTeamCornerHistory(hId,5).catch(()=>null); if(r) cacheSet(hCk,r,28_800_000); return r; })(),
+        (async () => { const h=cacheGet(aCk); if(h) return h; const r=await getTeamCornerHistory(aId,5).catch(()=>null); if(r) cacheSet(aCk,r,28_800_000); return r; })(),
         getH2H(hId, aId).catch(() => null),
       ]);
 
@@ -464,12 +450,43 @@ export default async function handler(req, res) {
     const lineupsMap    = Object.fromEntries(lineupsArr  .map(({id,lineups})    => [id, lineups]));
     const historicalMap = Object.fromEntries(historicalArr.map(({id,historical})=> [id, historical]));
 
-    // 4. Monta jogos ao vivo + loga predições no Supabase (fire-and-forget)
+    // 4. Monta jogos ao vivo
     const games = liveActive.map(f => {
       const id   = f.fixture?.id;
       const game = normalizeAFGame(f, statsMap[id]||null, lineupsMap[id]||null, false);
       if (historicalMap[id]) game.historical = historicalMap[id];
       return game;
+    });
+
+    // 4b. Odds ao vivo — top 5 jogos com mais corners acumulados (cache 30s)
+    // 75k/dia permite manter odds sempre ativas
+    const sortedByActivity = [...games]
+      .filter(g => g.hasStats && g.period >= 1)
+      .sort((a, b) => {
+        const ca = (a.corners?.home||0)+(a.corners?.away||0);
+        const cb = (b.corners?.home||0)+(b.corners?.away||0);
+        return cb - ca;
+      })
+      .slice(0, 5);
+
+    const oddsResults = await Promise.all(
+      sortedByActivity.map(async g => {
+        const id  = g.afFixtureId;
+        const ck  = `gm_odds_${id}`;
+        const hit = cacheGet(ck);
+        if (hit !== null) return { id, odds: hit };
+        const raw  = await getLiveOdds(id).catch(() => null);
+        const odds = raw ? parseLiveCornerOdds(raw) : null;
+        cacheSet(ck, odds, 30_000); // 30s
+        return { id, odds };
+      })
+    );
+    const oddsMap = Object.fromEntries(
+      oddsResults.map(({ id, odds }) => [id, odds])
+    );
+    // Injeta odds nos jogos
+    games.forEach(g => {
+      if (oddsMap[g.afFixtureId]) g.liveCornerOdds = oddsMap[g.afFixtureId];
     });
 
     // Log assíncrono — não bloqueia a resposta, não gera erro se Supabase offline

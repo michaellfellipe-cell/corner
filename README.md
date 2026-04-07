@@ -1,4 +1,4 @@
-# CornerEdge v35
+# CornerEdge v36
 
 App Next.js de previsão de escanteios ao vivo para apostas. Mobile-first, deploy Vercel.
 
