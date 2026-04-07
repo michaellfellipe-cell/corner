@@ -369,13 +369,8 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                       ● AF
                     </span>
                   )}
-                  {selected.dataSource === "espn-stats" && !pred.afEnriched && (
-                    <span style={{ color:"#f0c04088", background:"#f0c04010", padding:"1px 5px", borderRadius:3, border:"1px solid #f0c04022" }} title="Stats básicas via ESPN (sem cruzamentos/DA)">
-                      ● ESPN
-                    </span>
-                  )}
-                  {selected.dataSource === "af-no-stats" && (
-                    <span style={{ color:"#ff456088", background:"#ff456010", padding:"1px 5px", borderRadius:3, border:"1px solid #ff456022" }} title="Liga não reporta estatísticas">
+                  {!pred.afEnriched && selected.afFixtureId && (
+                    <span style={{ color:"#f0c04088", background:"#f0c04010", padding:"1px 5px", borderRadius:3, border:"1px solid #f0c04022" }} title="Liga não reporta estatísticas em tempo real">
                       ⚠ sem stats
                     </span>
                   )}
