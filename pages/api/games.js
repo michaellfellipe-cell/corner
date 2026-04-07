@@ -132,7 +132,8 @@ function buildEventsFromFixture(events) {
 }
 
 // ── Normaliza fixture AF → objeto canônico ──────────────────────────────────
-function normalizeAFGame(fix, stats, lineups, isUpcoming = false) {
+// espnStats: stats básicas da ESPN como fallback quando AF stats são null
+function normalizeAFGame(fix, stats, lineups, isUpcoming = false, espnStats = null) {
   const homeId = fix.teams?.home?.id;
   const awayId = fix.teams?.away?.id;
   const status = parseAFStatus(fix.fixture);
@@ -177,21 +178,24 @@ function normalizeAFGame(fix, stats, lineups, isUpcoming = false) {
     isUpcoming:    isUpcoming || status.type === "upcoming",
     isDemo:        false,
 
-    possession:    gameStats?.possession    ?? { home:50, away:50 },
-    shots:         gameStats?.shots         ?? { home:0,  away:0  },
-    onTarget:      gameStats?.onTarget      ?? { home:0,  away:0  },
-    corners:       gameStats?.corners       ?? { home:0,  away:0  },
-    fouls:         gameStats?.fouls         ?? { home:0,  away:0  },
+    // Stats: AF primeiro, ESPN como fallback, default neutro
+    // es_ = espnStats helper
+    possession:    gameStats?.possession    ?? (espnStats ? { home: espnStats.home.possession ?? 50, away: espnStats.away.possession ?? 50 } : { home:50, away:50 }),
+    shots:         gameStats?.shots         ?? (espnStats ? { home: espnStats.home.shots ?? 0,       away: espnStats.away.shots ?? 0       } : { home:0, away:0 }),
+    onTarget:      gameStats?.onTarget      ?? (espnStats ? { home: espnStats.home.onTarget ?? 0,    away: espnStats.away.onTarget ?? 0    } : { home:0, away:0 }),
+    corners:       gameStats?.corners       ?? (espnStats ? { home: espnStats.home.corners ?? 0,     away: espnStats.away.corners ?? 0     } : { home:0, away:0 }),
+    fouls:         gameStats?.fouls         ?? (espnStats ? { home: espnStats.home.fouls ?? 0,       away: espnStats.away.fouls ?? 0       } : { home:0, away:0 }),
     yellowCards,
     redCards,
     dangerousAttacks:     gameStats?.dangerousAttacks    ?? { home:0, away:0 },
     dangerousAttacksReal: !!gameStats,
-    saves:         gameStats?.saves         ?? { home:0,  away:0  },
-    offsides:      gameStats?.offsides      ?? { home:0,  away:0  },
+    saves:         gameStats?.saves         ?? (espnStats ? { home: espnStats.home.saves ?? 0,       away: espnStats.away.saves ?? 0       } : { home:0, away:0 }),
+    offsides:      gameStats?.offsides      ?? (espnStats ? { home: espnStats.home.offsides ?? 0,    away: espnStats.away.offsides ?? 0    } : { home:0, away:0 }),
+    blockedShots:  gameStats?.blockedShots  ?? (espnStats ? { home: espnStats.home.blockedShots ?? 0,away: espnStats.away.blockedShots ?? 0} : { home:0, away:0 }),
+    // AF-exclusive: ESPN não tem estes campos
     crosses:       gameStats?.crosses       ?? null,
     passes:        gameStats?.passes        ?? { home:0,  away:0  },
     accuratePasses:gameStats?.accuratePasses?? { home:0,  away:0  },
-    blockedShots:  gameStats?.blockedShots  ?? { home:0,  away:0  },
     shotsInsideBox:  gameStats?.shotsInsideBox  ?? null,
     shotsOutsideBox: gameStats?.shotsOutsideBox ?? null,
 
@@ -208,14 +212,24 @@ function normalizeAFGame(fix, stats, lineups, isUpcoming = false) {
     } : null,
 
     venue:      fix.fixture?.venue?.name || null,
-    dataSource: "af",
+    // hasStats: AF stats reais OU ESPN stats como fallback
+    hasStats:   !!(gameStats || espnStats),
+    dataSource: gameStats ? "af" : (espnStats ? "espn-stats" : "af-no-stats"),
   };
 }
 
-// ── Normaliza jogo ESPN sem match AF → dados básicos sem stats ──────────────
+// ── Normaliza jogo ESPN sem match AF — usa stats ESPN quando disponíveis ──────
 function normalizeEspnOnlyGame(eg) {
   const homeShort = (eg.homeName||"?").split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase().slice(0,4)||"HOM";
   const awayShort = (eg.awayName||"?").split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase().slice(0,4)||"AWY";
+
+  const es = eg.espnStats; // { home, away } ou null
+  const h  = es?.home;
+  const a  = es?.away;
+
+  // Helper: retorna valor ESPN ou default
+  const ev = (val, def) => (val !== null && val !== undefined) ? val : def;
+
   return {
     id:            `espn_${eg.id}`,
     afFixtureId:   null,
@@ -238,21 +252,32 @@ function normalizeEspnOnlyGame(eg) {
     statusDetail:  eg.statusDetail || "",
     isUpcoming:    false,
     isDemo:        false,
-    // Stats nulas — liga não coberta pelo AF no momento
-    possession:    { home:50, away:50 },
-    shots:         { home:0, away:0 }, onTarget: { home:0, away:0 },
-    corners:       { home:0, away:0 }, fouls:    { home:0, away:0 },
-    yellowCards:   { home:0, away:0 }, redCards: { home:0, away:0 },
+
+    // Stats: ESPN quando disponível, fallback neutro quando não
+    possession:    { home: ev(h?.possession, 50),  away: ev(a?.possession, 50)  },
+    shots:         { home: ev(h?.shots, 0),         away: ev(a?.shots, 0)         },
+    onTarget:      { home: ev(h?.onTarget, 0),      away: ev(a?.onTarget, 0)      },
+    corners:       { home: ev(h?.corners, 0),       away: ev(a?.corners, 0)       },
+    fouls:         { home: ev(h?.fouls, 0),         away: ev(a?.fouls, 0)         },
+    yellowCards:   { home: ev(h?.yellowCards, 0),   away: ev(a?.yellowCards, 0)   },
+    redCards:      { home: ev(h?.redCards, 0),      away: ev(a?.redCards, 0)      },
+    saves:         { home: ev(h?.saves, 0),         away: ev(a?.saves, 0)         },
+    offsides:      { home: ev(h?.offsides, 0),      away: ev(a?.offsides, 0)      },
+    blockedShots:  { home: ev(h?.blockedShots, 0),  away: ev(a?.blockedShots, 0)  },
+    // Campos que ESPN não fornece — nulos (AF exclusive)
     dangerousAttacks:     { home:0, away:0 },
     dangerousAttacksReal: false,
-    saves:         { home:0, away:0 }, offsides: { home:0, away:0 },
-    crosses:       null, passes: { home:0, away:0 },
-    accuratePasses:{ home:0, away:0 }, blockedShots: { home:0, away:0 },
-    shotsInsideBox: null, shotsOutsideBox: null,
+    crosses:       null,
+    passes:        { home:0, away:0 },
+    accuratePasses:{ home:0, away:0 },
+    shotsInsideBox: null,
+    shotsOutsideBox: null,
     substitutions: [], offensiveSubs: { home:0, away:0 },
     formations:    null,
     venue:         null,
-    dataSource:    "espn-only",
+    // hasStats: true se ESPN retornou algum dado real
+    hasStats:      !!es,
+    dataSource:    es ? "espn-stats" : "espn-only",
   };
 }
 
@@ -356,6 +381,46 @@ async function fetchEspnScoreboard() {
         if (period === 2 && minute > 0 && minute < 46) minute = 45 + minute;
       }
 
+      // Extrai stats básicas ESPN do array statistics dos competitors
+      // ESPN retorna: possessionPct, shots, shotsOnTarget, fouls,
+      //               yellowCards, redCards, corners, offsides, saves
+      const espnStat = (competitor, name) => {
+        const s = competitor.statistics?.find(x =>
+          x.name === name || x.abbreviation === name
+        );
+        if (!s || s.displayValue === "--") return null;
+        const v = parseFloat(s.displayValue);
+        return isNaN(v) ? null : v;
+      };
+
+      const homeStats = {
+        possession: espnStat(home, "possessionPct"),
+        shots:      espnStat(home, "shots"),
+        onTarget:   espnStat(home, "shotsOnTarget"),
+        fouls:      espnStat(home, "fouls"),
+        yellowCards:espnStat(home, "yellowCards"),
+        redCards:   espnStat(home, "redCards"),
+        corners:    espnStat(home, "corners"),
+        offsides:   espnStat(home, "offsides"),
+        saves:      espnStat(home, "saves"),
+        blockedShots: espnStat(home, "blockedShots"),
+      };
+      const awayStats = {
+        possession: espnStat(away, "possessionPct"),
+        shots:      espnStat(away, "shots"),
+        onTarget:   espnStat(away, "shotsOnTarget"),
+        fouls:      espnStat(away, "fouls"),
+        yellowCards:espnStat(away, "yellowCards"),
+        redCards:   espnStat(away, "redCards"),
+        corners:    espnStat(away, "corners"),
+        offsides:   espnStat(away, "offsides"),
+        saves:      espnStat(away, "saves"),
+        blockedShots: espnStat(away, "blockedShots"),
+      };
+
+      // hasEspnStats: true se ao menos shots ou possession veio preenchido
+      const hasEspnStats = homeStats.shots !== null || homeStats.possession !== null;
+
       const parsed = {
         id:           ev.id,
         homeName:     home.team?.displayName || "?",
@@ -368,6 +433,8 @@ async function fetchEspnScoreboard() {
         period,
         statusDetail: comp?.status?.type?.description || "",
         startTime:    ev.date || null,
+        // Stats ESPN (nulas quando não disponíveis — não zeros)
+        espnStats: hasEspnStats ? { home: homeStats, away: awayStats } : null,
       };
 
       if (state === "in")  live.push(parsed);
@@ -438,6 +505,15 @@ export default async function handler(req, res) {
     const afLiveArr    = afLiveRaw          || [];
 
     // PASSO 2 — Match ESPN ao vivo ↔ AF fixture
+    // Mapa de espnStats por nome normalizado para fallback af-no-stats
+    const espnStatsMap = {};
+    for (const eg of espnLive) {
+      if (eg.espnStats) {
+        const key = normName(eg.homeName) + "_" + normName(eg.awayName);
+        espnStatsMap[key] = eg.espnStats;
+      }
+    }
+
     const espnWithAF = espnLive.map(eg => ({
       espnGame:  eg,
       afFixture: matchAFFixture(afLiveArr, eg.homeName, eg.awayName) || null,
@@ -545,9 +621,12 @@ export default async function handler(req, res) {
     // PASSO 4 — Monta jogos ao vivo
 
     // 4a. Matched ESPN + AF (dados completos com stats)
-    const gamesMatched = matched.map(({ afFixture }) => {
+    // Quando AF stats são null, usa ESPN stats como fallback
+    const gamesMatched = matched.map(({ espnGame, afFixture }) => {
       const id   = afFixture.fixture?.id;
-      const game = normalizeAFGame(afFixture, statsMap[id]||null, lineupsMap[id]||null, false);
+      const key  = normName(espnGame.homeName) + "_" + normName(espnGame.awayName);
+      const eStats = espnStatsMap[key] || null;
+      const game = normalizeAFGame(afFixture, statsMap[id]||null, lineupsMap[id]||null, false, eStats);
       if (historicalMap[id]) game.historical = historicalMap[id];
       return game;
     });
