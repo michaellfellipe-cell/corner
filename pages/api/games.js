@@ -263,6 +263,47 @@ const TOP_LEAGUES_HIST = new Set([
   128, 71,72, 262,239, 253, 106,
 ]);
 
+// ── Ligas principais para upcoming (equivalente ao escopo das ~110 da ESPN) ──
+const MAIN_LEAGUES = new Set([
+  39,40,41,45,48,       // Inglaterra 1/2/3/FA Cup/League Cup
+  140,141,142,           // Espanha 1/2/3
+  135,136,               // Itália 1/2
+  78,79,                 // Alemanha 1/2
+  61,62,66,              // França 1/2/3
+  94,95,                 // Portugal 1/2
+  88,89,                 // Holanda 1/2
+  144,143,               // Bélgica 1/2
+  179,180,               // Escócia 1/2
+  203,204,               // Turquia 1/2
+  197,198,               // Grécia 1/2
+  235,236,               // Rússia 1/2
+  113,114,               // Suécia 1/2
+  103,104,               // Noruega 1/2
+  119,120,               // Dinamarca 1/2
+  207,208,               // Suíça 1/2
+  218,219,               // Áustria 1/2
+  106,107,               // Polônia 1/2
+  345,346,               // Rep. Checa 1/2
+  283,284,               // Romênia 1/2
+  169,170,               // Croácia 1/2
+  167,168,               // Sérvia 1/2
+  382,                   // Ucrânia
+  2,3,4,531,848,         // Champions/Europa/Conference/Supercopas
+  71,72,73,              // Brasil 1/2/3
+  128,131,               // Argentina 1/2
+  262,239,               // México 1/2
+  253,256,               // MLS/USL
+  265,266,               // Chile 1/2
+  268,269,               // Uruguai 1/2
+  240,                   // Colômbia 2
+  11,13,                 // Libertadores/Sul-Americana
+  98,99,                 // Japão 1/2
+  292,293,               // Coreia 1/2
+  307,308,               // Arábia Saudita 1/2
+  233,                   // Egito
+  1,5,6,8,9,10,15,      // Copas do Mundo/Eliminatórias/Nations League
+]);
+
 // ── ESPN Scoreboard — hoje + amanhã (cache 30s para live, 10min para upcoming)
 async function fetchEspnScoreboard() {
   const ck  = "espn_scoreboard";
@@ -518,58 +559,38 @@ export default async function handler(req, res) {
     const allLiveGames = [...gamesMatched, ...gamesEspnOnly];
 
     // PASSO 5 — Upcoming
+    // AF é a fonte primária (não tem problema de fuso como a ESPN)
+    // filtrada pelas MAIN_LEAGUES (equivalente ao escopo da ESPN)
+    // ESPN enriquece com dados onde possível
     const now = Date.now();
 
-    // 5a. ESPN upcoming: próximas 24h, SEM filtro de liga
-    const upcomingEspnNorm = new Set();
-    const upcomingEspnFull = espnUpcoming
-      .filter(eg => {
-        if (!eg.startTime) return false;
-        const kick = new Date(eg.startTime).getTime();
-        return kick > now && kick < now + 24 * 3_600_000;
-      })
-      .map(eg => {
-        const key = `${normName(eg.homeName)}_${normName(eg.awayName)}`;
-        upcomingEspnNorm.add(key);
-        const hShort = (eg.homeName||"?").split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase().slice(0,4)||"HOM";
-        const aShort = (eg.awayName||"?").split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase().slice(0,4)||"AWY";
+    // Mapa de jogos ESPN upcoming para enriquecimento por nome
+    const espnUpcomingByKey = {};
+    for (const eg of espnUpcoming) {
+      if (!eg.startTime) continue;
+      const kick = new Date(eg.startTime).getTime();
+      if (kick <= now || kick > now + 36 * 3_600_000) continue;
+      const key = normName(eg.homeName) + "_" + normName(eg.awayName);
+      espnUpcomingByKey[key] = eg;
+    }
 
-        // Tenta enriquecer com dados AF upcoming
-        const afFix = matchAFFixture(afUpcomingArr, eg.homeName, eg.awayName);
-        return {
-          id:            afFix ? String(afFix.fixture?.id) : `espn_${eg.id}`,
-          afFixtureId:   afFix?.fixture?.id || null,
-          home:          afFix?.teams?.home?.name || eg.homeName,
-          away:          afFix?.teams?.away?.name || eg.awayName,
-          homeShort:     hShort,
-          awayShort:     aShort,
-          homeId:        afFix?.teams?.home?.id  || null,
-          awayId:        afFix?.teams?.away?.id  || null,
-          league:        afFix?.league?.name || eg.leagueName,
-          leagueId:      afFix ? `af_${afFix.league?.id}` : `espn_${eg.leagueSlug}`,
-          leagueCountry: afFix ? flag(afFix.league?.country) : "🏳️",
-          leagueAfId:    afFix?.league?.id || null,
-          season:        afFix?.league?.season || null,
-          score:         { home:0, away:0 },
-          minute:0, period:0, clock:"",
-          startTime:     afFix?.fixture?.date || eg.startTime,
-          statusDetail:  "",
-          isUpcoming:    true,
-          isDemo:        false,
-          dataSource:    afFix ? "hybrid" : "espn",
-          possession:{home:50,away:50}, shots:{home:0,away:0}, onTarget:{home:0,away:0},
-          corners:{home:0,away:0}, fouls:{home:0,away:0},
-          yellowCards:{home:0,away:0}, redCards:{home:0,away:0},
-          dangerousAttacks:{home:0,away:0}, dangerousAttacksReal:false,
-          saves:{home:0,away:0}, offsides:{home:0,away:0},
-          crosses:null, passes:{home:0,away:0}, accuratePasses:{home:0,away:0},
-          blockedShots:{home:0,away:0}, shotsInsideBox:null, shotsOutsideBox:null,
-          substitutions:[], offensiveSubs:{home:0,away:0}, formations:null, venue:null,
-        };
+    // AF upcoming filtrado a MAIN_LEAGUES → base confiável independente de fuso
+    const upcomingFromAF = afUpcomingArr
+      .filter(f => {
+        if (!MAIN_LEAGUES.has(f.league?.id)) return false;
+        const kick = (f.fixture?.timestamp || 0) * 1000;
+        return kick > now && kick < now + 36 * 3_600_000;
+      })
+      .map(f => {
+        const game = normalizeAFGame(f, null, null, true);
+        // Enriquece com dado ESPN se tiver (startTime local, leagueName curto)
+        const key = normName(game.home) + "_" + normName(game.away);
+        const eg  = espnUpcomingByKey[key];
+        if (eg) game.dataSource = "hybrid";
+        return game;
       });
 
-    // Upcoming: apenas o que ESPN trouxe (AF só enriquece, não adiciona ligas)
-    const upcoming = [...upcomingEspnFull]
+    const upcoming = upcomingFromAF
       .sort((a, b) => new Date(a.startTime||0) - new Date(b.startTime||0))
       .slice(0, 100);
 
