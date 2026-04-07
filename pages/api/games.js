@@ -165,7 +165,9 @@ function extractStat(statsArr, teamIdx, type) {
 }
 
 function buildGameStats(statsArr) {
-  if (!statsArr || !Array.isArray(statsArr) || statsArr.length < 2) return null;
+  if (!statsArr || !Array.isArray(statsArr) || statsArr.length === 0) return null;
+  // Aceita 1 ou 2 times — AF às vezes retorna só 1 time nos primeiros minutos
+  // Se só 1 time, preenche o outro com zeros/null
   const s = (idx, type) => extractStat(statsArr, idx, type);
   return {
     corners:          { home: s(0,"Corner Kicks")     ?? 0,    away: s(1,"Corner Kicks")     ?? 0    },
@@ -285,7 +287,11 @@ function normalizeAFGame(fix, stats, lineups, isUpcoming = false) {
 
     venue:      fix.fixture?.venue?.name || null,
     hasStats:   !!gameStats,
-    dataSource: gameStats ? "af" : "af-no-stats",
+    // af-loading: jogo iniciado há <4min, stats ainda chegando na AF (normal)
+    // af-no-stats: liga não reporta stats (ex: Challenge League)
+    dataSource: gameStats ? "af"
+              : status.minute < 4 ? "af-loading"
+              : "af-no-stats",
   };
 }
 
@@ -366,11 +372,17 @@ export default async function handler(req, res) {
     // Stats: lotes de 6 (crítico — sem stats não há análise)
     const statsArr = await batchedFetch(liveActive, async f => {
       const id  = f.fixture?.id;
-      const ck  = `af_stats_${id}`;
+      const ck  = `gm_stats_${id}`;     // prefixo gm_ para não colidir com apifootball.js
+      const nk  = `gm_stats_${id}_null`; // cache negativo
       const hit = cacheGet(ck);
-      if (hit) return { id, stats: hit };
+      if (hit !== null) return { id, stats: hit };
+      if (cacheGet(nk) !== null) return { id, stats: null }; // ainda em cooldown
       const stats = await getFixtureStats(id).catch(() => null);
-      if (stats) cacheSet(ck, stats, 240_000); // 4min
+      if (stats !== null) {
+        cacheSet(ck, stats, 240_000); // 4min — sucesso
+      } else {
+        cacheSet(nk, true, 90_000);   // 90s — evita retry imediato
+      }
       return { id, stats };
     }, 6);
 

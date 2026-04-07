@@ -370,8 +370,13 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                     </span>
                   )}
                   {!pred.afEnriched && selected.afFixtureId && (
-                    <span style={{ color:"#f0c04088", background:"#f0c04010", padding:"1px 5px", borderRadius:3, border:"1px solid #f0c04022" }} title="Liga não reporta estatísticas em tempo real">
-                      ⚠ sem stats
+                    <span style={{
+                      color: selected.dataSource === "af-loading" ? "#2a7fff88" : "#f0c04088",
+                      background: selected.dataSource === "af-loading" ? "#2a7fff10" : "#f0c04010",
+                      padding:"1px 5px", borderRadius:3,
+                      border: `1px solid ${selected.dataSource === "af-loading" ? "#2a7fff22" : "#f0c04022"}`,
+                    }} title={selected.dataSource === "af-loading" ? "Stats chegando (jogo recém-iniciado)" : "Liga não reporta estatísticas em tempo real"}>
+                      {selected.dataSource === "af-loading" ? "⏳ carregando" : "⚠ sem stats"}
                     </span>
                   )}
                   {pred.hasHistoricalData && (
