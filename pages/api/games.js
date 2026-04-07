@@ -263,20 +263,30 @@ const TOP_LEAGUES_HIST = new Set([
   128, 71,72, 262,239, 253, 106,
 ]);
 
-// ── ESPN Scoreboard — jogos ao vivo + próximos (uma só req, cache 30s) ──────
+// ── ESPN Scoreboard — hoje + amanhã (cache 30s para live, 10min para upcoming)
 async function fetchEspnScoreboard() {
   const ck  = "espn_scoreboard";
   const hit = cacheGet(ck);
   if (hit) return hit;
 
   try {
-    const res = await fetch(
-      "https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?limit=200",
-      { signal: AbortSignal.timeout(7000) }
-    );
-    if (!res.ok) return { live:[], upcoming:[] };
-    const json   = await res.json();
-    const events = json.events || [];
+    const tomorrow = new Date(Date.now() + 86_400_000);
+    const yyyymmdd = tomorrow.toISOString().slice(0,10).replace(/-/g,"");
+
+    // Busca hoje (live + upcoming do dia) e amanhã em paralelo
+    const [r1, r2] = await Promise.all([
+      fetch("https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?limit=200",
+        { signal: AbortSignal.timeout(7000) }),
+      fetch(`https://site.api.espn.com/apis/site/v2/sports/soccer/all/scoreboard?limit=200&dates=${yyyymmdd}`,
+        { signal: AbortSignal.timeout(7000) }),
+    ]);
+
+    const [j1, j2] = await Promise.all([
+      r1.ok ? r1.json() : { events: [] },
+      r2.ok ? r2.json() : { events: [] },
+    ]);
+
+    const events = [...(j1.events || []), ...(j2.events || [])];
 
     const live     = [];
     const upcoming = [];
@@ -331,7 +341,8 @@ async function fetchEspnScoreboard() {
   }
 }
 
-// ── AF Upcoming (cache 15min) ───────────────────────────────────────────────
+// ── AF Upcoming — hoje + amanhã (cache 15min) ──────────────────────────────
+// Busca dois dias para cobrir madrugada quando jogos do dia acabaram
 async function getUpcomingAF() {
   const apiKey = process.env.APIFOOTBALL_KEY;
   if (!apiKey) return [];
@@ -341,14 +352,23 @@ async function getUpcomingAF() {
   if (hit) return hit;
 
   try {
-    const today = new Date().toISOString().slice(0, 10);
-    const res = await fetch(
-      `https://v3.football.api-sports.io/fixtures?date=${today}&status=NS&timezone=UTC`,
-      { headers: { "x-apisports-key": apiKey }, signal: AbortSignal.timeout(8000) }
-    );
-    if (!res.ok) return [];
-    const data     = await res.json();
-    const fixtures = data.response || [];
+    const today    = new Date();
+    const tomorrow = new Date(today.getTime() + 86_400_000);
+    const fmt = (d) => d.toISOString().slice(0, 10);
+
+    const [r1, r2] = await Promise.all([
+      fetch(`https://v3.football.api-sports.io/fixtures?date=${fmt(today)}&status=NS&timezone=UTC`,
+        { headers: { "x-apisports-key": apiKey }, signal: AbortSignal.timeout(8000) }),
+      fetch(`https://v3.football.api-sports.io/fixtures?date=${fmt(tomorrow)}&status=NS&timezone=UTC`,
+        { headers: { "x-apisports-key": apiKey }, signal: AbortSignal.timeout(8000) }),
+    ]);
+
+    const [d1, d2] = await Promise.all([
+      r1.ok ? r1.json() : { response: [] },
+      r2.ok ? r2.json() : { response: [] },
+    ]);
+
+    const fixtures = [...(d1.response || []), ...(d2.response || [])];
     cacheSet(ck, fixtures, 900_000); // 15min
     return fixtures;
   } catch {
@@ -515,13 +535,13 @@ export default async function handler(req, res) {
     // PASSO 5 — Upcoming
     const now = Date.now();
 
-    // 5a. ESPN upcoming: próximas 6h, SEM filtro de liga
+    // 5a. ESPN upcoming: próximas 24h, SEM filtro de liga
     const upcomingEspnNorm = new Set();
     const upcomingEspnFull = espnUpcoming
       .filter(eg => {
         if (!eg.startTime) return false;
         const kick = new Date(eg.startTime).getTime();
-        return kick > now && kick < now + 6 * 3_600_000;
+        return kick > now && kick < now + 24 * 3_600_000;
       })
       .map(eg => {
         const key = `${normName(eg.homeName)}_${normName(eg.awayName)}`;
@@ -567,7 +587,7 @@ export default async function handler(req, res) {
     const afExclusiveUpcoming = afUpcomingArr
       .filter(f => {
         const kick = (f.fixture?.timestamp || 0) * 1000;
-        if (kick <= now || kick > now + 6 * 3_600_000) return false;
+        if (kick <= now || kick > now + 24 * 3_600_000) return false;
         const hn = f.teams?.home?.name || "";
         const an = f.teams?.away?.name || "";
         const key = normName(hn) + "_" + normName(an);
@@ -577,7 +597,7 @@ export default async function handler(req, res) {
 
     const upcoming = [...upcomingEspnFull, ...afExclusiveUpcoming]
       .sort((a, b) => new Date(a.startTime||0) - new Date(b.startTime||0))
-      .slice(0, 80);
+      .slice(0, 100);
 
     // PASSO 6 — Resposta
     return res.status(200).json({
