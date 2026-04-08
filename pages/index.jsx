@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import Head from "next/head";
-import { projectCorners, generateDemoGame, analyzeFinalWindow } from "../lib/predictor";
+import { projectCorners, generateDemoGame, analyzeFinalWindow, calcGoalPressureSignal } from "../lib/predictor";
 
 // ── Thresholds ────────────────────────────────────────────────────────────────
 const ALERT_THRESHOLD = 62;
@@ -340,6 +340,26 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                         <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:22, color:c2 }}>{tbw.label}</div>
                         <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#3d4f6b" }}>{tbw.actionLabel}</div>
                       </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Indicador de possível gol */}
+                {(() => {
+                  const goalSig = calcGoalPressureSignal(selected, pred);
+                  if (!goalSig) return null;
+                  return (
+                    <div style={{
+                      marginTop:6,
+                      background: `${goalSig.color}18`,
+                      border: `1px solid ${goalSig.color}44`,
+                      borderRadius:7, padding:"7px 10px",
+                      display:"flex", alignItems:"center", gap:8,
+                    }}>
+                      <span style={{ fontSize:14 }}>⚽</span>
+                      <span style={{ fontFamily:"'Space Mono',monospace", fontSize:9, color: goalSig.color }}>
+                        {goalSig.label}
+                      </span>
                     </div>
                   );
                 })()}
@@ -760,7 +780,8 @@ export default function Home() {
 
   const handleSelect = useCallback((game) => {
     setSelected(game);
-    setPrediction(game.isUpcoming ? null : projectCorners(game));
+    const pred = game.isUpcoming ? null : projectCorners(game);
+    setPrediction(pred);
     if (isMobile) setMobileView("detail");
   }, [isMobile]);
   const handleSelectRef = useRef(handleSelect);
