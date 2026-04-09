@@ -8,8 +8,8 @@ const RED_THRESHOLD   = 75;
 const BLOCK_ALERTS    = 82;
 
 const confColor = (c, isEarly) => {
-  if (isEarly) return c >= 72 ? "#f0c040" : c >= 55 ? "#f0c04088" : "#2a3a50";
-  return c >= RED_THRESHOLD ? "#ff4560" : c >= ALERT_THRESHOLD ? "#00e5a0" : c >= 45 ? "#f0c040" : "#2a3a50";
+  if (isEarly) return c >= 72 ? "#f0c040" : c >= 55 ? "#f0c04088" : "#7a9ab8";
+  return c >= RED_THRESHOLD ? "#ff4560" : c >= ALERT_THRESHOLD ? "#00e5a0" : c >= 45 ? "#f0c040" : "#7a9ab8";
 };
 
 // ── Responsive hook ───────────────────────────────────────────────────────────
@@ -79,7 +79,7 @@ function StatRow({ label, h, a, accent }) {
     <div style={{ marginBottom:6 }}>
       <div style={{ display:"flex", justifyContent:"space-between", fontFamily:"'Space Mono',monospace", fontSize:10, marginBottom:2 }}>
         <span style={{ color: accent ? "#00e5a0" : "#c9d6e3", fontWeight: accent ? 700 : 400, minWidth:22 }}>{h ?? "—"}</span>
-        <span style={{ color:"#3d4f6b", fontSize:9, textTransform:"uppercase", letterSpacing:.8 }}>{label}</span>
+        <span style={{ color:"#6a8aaa", fontSize:9, textTransform:"uppercase", letterSpacing:.8 }}>{label}</span>
         <span style={{ color: accent ? "#f0c040" : "#c9d6e3", textAlign:"right", minWidth:22, fontWeight: accent ? 700 : 400 }}>{a ?? "—"}</span>
       </div>
       <div style={{ height:3, background:"#0f1825", borderRadius:2, overflow:"hidden" }}>
@@ -100,8 +100,8 @@ function Section({ title, badge, children, defaultOpen = true, accent }) {
         fontFamily:"'Space Mono',monospace", fontSize:9, color: accent || "#4a6070",
         letterSpacing:1.5, textTransform:"uppercase",
       }}>
-        <span>{title} {badge && <span style={{ background:"#1a2535", padding:"1px 6px", borderRadius:3, marginLeft:6, color:"#3d4f6b" }}>{badge}</span>}</span>
-        <span style={{ color:"#2a3a50", transition:"transform .2s", transform: open ? "rotate(180deg)" : "rotate(0)" }}>▾</span>
+        <span>{title} {badge && <span style={{ background:"#1a2535", padding:"1px 6px", borderRadius:3, marginLeft:6, color:"#6a8aaa" }}>{badge}</span>}</span>
+        <span style={{ color:"#7a9ab8", transition:"transform .2s", transform: open ? "rotate(180deg)" : "rotate(0)" }}>▾</span>
       </button>
       {open && <div style={{ padding:"12px 14px", background:"#080d16" }}>{children}</div>}
     </div>
@@ -122,7 +122,7 @@ function ConfRing({ value, color }) {
       </svg>
       <div style={{ position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center" }}>
         <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:28, lineHeight:1, color }}>{value}</div>
-        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b", letterSpacing:1 }}>CONF%</div>
+        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#6a8aaa", letterSpacing:1 }}>CONF%</div>
       </div>
     </div>
   );
@@ -139,10 +139,14 @@ function GameCard({ game, onSelect, isSelected }) {
     }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:13, color:"#8a9ab0", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
+          <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:13, color:"#b0c4d8", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
             {game.home} × {game.away}
           </div>
-          <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#2a3a50", marginTop:2 }}>{game.leagueCountry} {game.league}</div>
+          <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#7a9ab8", marginTop:2, display:"flex", alignItems:"center", gap:4 }}>
+            <span>{game.leagueCountry} {game.league}</span>
+            {game.dataQuality === "realtime" && <span title="Tempo real" style={{fontSize:7}}>⚡</span>}
+            {game.dataQuality === "slow" && <span title="Dados lentos — atraso 5-15min" style={{fontSize:7, color:"#ff456066"}}>🐌</span>}
+          </div>
         </div>
         <div style={{ fontFamily:"'Space Mono',monospace", fontSize:10, color:"#f0c040", marginLeft:8, flexShrink:0 }}>{formatKickoff(game.startTime)}</div>
       </div>
@@ -154,7 +158,7 @@ function GameCard({ game, onSelect, isSelected }) {
   const isTooLate = entryWindow.isTooLate;
   const isStrong  = conf >= ALERT_THRESHOLD && !isTooLate;
   const isHot     = conf >= RED_THRESHOLD && !isTooLate;
-  const sc        = isTooLate ? "#2a3a50" : confColor(conf, isEarly);
+  const sc        = isTooLate ? "#7a9ab8" : confColor(conf, isEarly);
   const corners   = (game.corners?.home ?? 0) + (game.corners?.away ?? 0);
 
   return (
@@ -171,21 +175,21 @@ function GameCard({ game, onSelect, isSelected }) {
           <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:13, color: isStrong ? "#e0eaf5" : "#6a7a90", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>
             {game.home} × {game.away}
           </div>
-          <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#2a3a50", marginTop:1 }}>
+          <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#7a9ab8", marginTop:1 }}>
             {game.leagueCountry} {game.league}
           </div>
         </div>
         <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:20, color: isStrong ? "#e0eaf5" : "#3a4f60", letterSpacing:-0.5, marginLeft:8, flexShrink:0 }}>
-          {game.score.home}<span style={{ color:"#2a3a50", fontWeight:300 }}>-</span>{game.score.away}
+          {game.score.home}<span style={{ color:"#7a9ab8", fontWeight:300 }}>-</span>{game.score.away}
         </div>
       </div>
 
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
         <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-          <span style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#2a3a50" }}>{game.minute}'</span>
-          <span style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#2a3a50" }}>ESC:{corners}</span>
+          <span style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#7a9ab8" }}>{game.minute}'</span>
+          <span style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#7a9ab8" }}>ESC:{corners}</span>
           {isFastTrack && <span style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#f0c040", background:"#f0c04015", padding:"1px 4px", borderRadius:3 }}>⚡FT</span>}
-          {isTooLate && <span style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50" }}>⏰</span>}
+          {isTooLate && <span style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#7a9ab8" }}>⏰</span>}
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:5 }}>
           {!isTooLate && targetBetWindow.isNext && (
@@ -195,7 +199,7 @@ function GameCard({ game, onSelect, isSelected }) {
           )}
           <div style={{
             fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:14, letterSpacing:.5,
-            color: isHot ? "#080d16" : isTooLate ? "#2a3a50" : sc,
+            color: isHot ? "#080d16" : isTooLate ? "#7a9ab8" : sc,
             background: isHot && !isTooLate ? sc : isTooLate ? "#0f1825" : `${sc}18`,
             padding:"2px 8px", borderRadius:4, minWidth:40, textAlign:"center",
           }}>
@@ -222,7 +226,7 @@ function AlertBanner({ alerts, onDismiss, soundOn, onToggleSound }) {
             cursor:"pointer", whiteSpace:"nowrap", color:"#c9d6e3",
           }}>
             <span style={{ color:"#00e5a0", fontWeight:700 }}>{a.game}</span>
-            <span style={{ color:"#2a3a50" }}>·</span>
+            <span style={{ color:"#7a9ab8" }}>·</span>
             <span style={{ color:"#f0c040" }}>{a.minute}'</span>
             <span style={{
               background: a.confidence >= RED_THRESHOLD ? "#ff4560" : "#00e5a0",
@@ -236,9 +240,9 @@ function AlertBanner({ alerts, onDismiss, soundOn, onToggleSound }) {
       </div>
       <button onClick={onToggleSound} style={{
         flexShrink:0, background:"none", border:"none", cursor:"pointer",
-        fontSize:12, color: soundOn ? "#00e5a0" : "#2a3a50", padding:"0 4px",
+        fontSize:12, color: soundOn ? "#00e5a0" : "#7a9ab8", padding:"0 4px",
       }}>{soundOn ? "🔊" : "🔇"}</button>
-      <button onClick={onDismiss} style={{ flexShrink:0, background:"none", border:"none", color:"#2a3a50", cursor:"pointer", fontSize:13, padding:"0 4px" }}>✕</button>
+      <button onClick={onDismiss} style={{ flexShrink:0, background:"none", border:"none", color:"#7a9ab8", cursor:"pointer", fontSize:13, padding:"0 4px" }}>✕</button>
     </div>
   );
 }
@@ -250,7 +254,7 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
   const isRed   = (pred?.confidence ?? 0) >= RED_THRESHOLD;
   const isGreen = (pred?.confidence ?? 0) >= ALERT_THRESHOLD;
   const isStrong = isRed || isGreen;
-  const sc = pred ? confColor(pred.confidence, pred.isEarly) : "#2a3a50";
+  const sc = pred ? confColor(pred.confidence, pred.isEarly) : "#7a9ab8";
   const isTooLate = pred?.entryWindow?.isTooLate;
   const fw = !selected.isUpcoming ? analyzeFinalWindow(selected) : null;
 
@@ -264,17 +268,19 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:8 }}>
           <div style={{ flex:1, minWidth:0 }}>
             {isMobile && (
-              <button onClick={onBack} style={{ background:"none", border:"none", cursor:"pointer", color:"#3d4f6b", fontFamily:"'Space Mono',monospace", fontSize:9, padding:0, marginBottom:6, display:"flex", alignItems:"center", gap:4 }}>
+              <button onClick={onBack} style={{ background:"none", border:"none", cursor:"pointer", color:"#6a8aaa", fontFamily:"'Space Mono',monospace", fontSize:9, padding:0, marginBottom:6, display:"flex", alignItems:"center", gap:4 }}>
                 ← VOLTAR
               </button>
             )}
             <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize: isMobile ? 18 : 22, letterSpacing:.5, color:"#e0eaf5", lineHeight:1.1 }}>
               {selected.home}
-              <span style={{ color:"#2a3a50", fontWeight:300 }}> × </span>
+              <span style={{ color:"#7a9ab8", fontWeight:300 }}> × </span>
               {selected.away}
             </div>
-            <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#3d4f6b", marginTop:3, display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
+            <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#6a8aaa", marginTop:3, display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
               <span>{selected.leagueCountry} {selected.league}</span>
+              {selected.dataQuality === "realtime" && <span title="Dados em tempo real (Opta)" style={{fontSize:9, color:"#00e5a066"}}>⚡</span>}
+              {selected.dataQuality === "slow" && <span title="Dados lentos — pode atrasar 5-15min" style={{fontSize:9, color:"#ff456066"}}>🐌</span>}
               {!selected.isUpcoming && (
                 <><span style={{ color:"#1a2535" }}>·</span><span style={{ display:"inline-flex", alignItems:"center", gap:4 }}><Dot/><span style={{ color:"#00e5a0" }}>AO VIVO {selected.minute}' {selected.period===2?"2ºT":"1ºT"}</span></span></>
               )}
@@ -294,7 +300,7 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
         <div style={{ background:"#0d1420", border:"1px solid #1a2535", borderRadius:10, padding:24, textAlign:"center" }}>
           <div style={{ fontSize:28, marginBottom:8 }}>🕐</div>
           <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:16, color:"#f0c040" }}>Início às {formatKickoff(selected.startTime)} (Brasília)</div>
-          <div style={{ fontFamily:"'Space Mono',monospace", fontSize:9, color:"#3d4f6b", marginTop:4 }}>Análise disponível quando o jogo começar.</div>
+          <div style={{ fontFamily:"'Space Mono',monospace", fontSize:9, color:"#6a8aaa", marginTop:4 }}>Análise disponível quando o jogo começar.</div>
         </div>
       ) : pred && (
         <>
@@ -307,8 +313,8 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
             <div style={{ display:"flex", gap:14, alignItems:"center", flexWrap: isMobile ? "wrap" : "nowrap" }}>
               {/* Ring */}
               <div style={{ flexShrink:0 }}>
-                <ConfRing value={pred.confidence} color={isTooLate ? "#2a3a50" : sc}/>
-                <div style={{ textAlign:"center", marginTop:4, fontFamily:"'Space Mono',monospace", fontSize:8, color:"#2a3a50" }}>
+                <ConfRing value={pred.confidence} color={isTooLate ? "#7a9ab8" : sc}/>
+                <div style={{ textAlign:"center", marginTop:4, fontFamily:"'Space Mono',monospace", fontSize:8, color:"#7a9ab8" }}>
                   {pred.phase} · {pred.subPhase}
                   {pred.isFastTrack && <span style={{ color:"#f0c040", marginLeft:4 }}>⚡</span>}
                 </div>
@@ -333,12 +339,12 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                   const c2 = tbw.isNext ? "#00e5a0" : "#f0c040";
                   return (
                     <div style={{ background:`${c2}0d`, border:`1px solid ${c2}33`, borderRadius:7, padding:"8px 10px" }}>
-                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b", letterSpacing:1.5, marginBottom:3 }}>
+                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#6a8aaa", letterSpacing:1.5, marginBottom:3 }}>
                         {tbw.isNext ? "APOSTAR NA PRÓXIMA FAIXA" : "FAIXA ATIVA"}
                       </div>
                       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                         <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:22, color:c2 }}>{tbw.label}</div>
-                        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#3d4f6b" }}>{tbw.actionLabel}</div>
+                        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#6a8aaa" }}>{tbw.actionLabel}</div>
                       </div>
                     </div>
                   );
@@ -368,7 +374,7 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                 <div style={{ marginTop:6, display:"flex", gap:8, flexWrap:"wrap", alignItems:"center" }}>
                   {(() => {
                     const w = pred.entryWindow;
-                    const wc = w.urgency==="blocked"?"#2a3a50":w.urgency==="good"?"#00e5a0":w.urgency==="warning"?"#f0c040":"#ff4560";
+                    const wc = w.urgency==="blocked"?"#7a9ab8":w.urgency==="good"?"#00e5a0":w.urgency==="warning"?"#f0c040":"#ff4560";
                     const wi = w.urgency==="blocked"?"🚫":w.urgency==="good"?"✅":w.urgency==="warning"?"⚠️":"⏰";
                     return <span style={{ fontFamily:"'Space Mono',monospace", fontSize:9, color:wc }}>{wi} {w.label}</span>;
                   })()}
@@ -380,7 +386,7 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                 </div>
 
                 {/* Mini stats + AF status */}
-                <div style={{ marginTop:8, fontFamily:"'Space Mono',monospace", fontSize:8, color:"#2a3a50", display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+                <div style={{ marginTop:8, fontFamily:"'Space Mono',monospace", fontSize:8, color:"#7a9ab8", display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
                   <span>proj: ~{pred.projected10}/10min</span>
                   <span>pressão: {pred.pressureMult}×</span>
                   <span>esc: {pred.totalCorners}</span>
@@ -389,6 +395,23 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                       ● AF
                     </span>
                   )}
+                  {/* Badge de qualidade de dados */}
+                  {pred.afEnriched && (() => {
+                    const q = selected.dataQuality;
+                    if (q === "realtime") return (
+                      <span style={{ color:"#00e5a0", background:"#00e5a010", padding:"1px 5px", borderRadius:3, border:"1px solid #00e5a022", fontSize:7 }}
+                        title="Dados em tempo real (Opta) — atualização a cada 30-60s">
+                        ⚡ tempo real
+                      </span>
+                    );
+                    if (q === "slow") return (
+                      <span style={{ color:"#ff456099", background:"#ff456010", padding:"1px 5px", borderRadius:3, border:"1px solid #ff456033", fontSize:7 }}
+                        title="Dados lentos — pode atrasar 5-15min nesta liga. Cuidado com o timing.">
+                        🐌 dados lentos
+                      </span>
+                    );
+                    return null; // normal: sem badge
+                  })()}
                   {!pred.afEnriched && selected.afFixtureId && (
                     <span style={{
                       color: selected.dataSource === "af-loading" ? "#2a7fff88" : "#f0c04088",
@@ -422,10 +445,10 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                   <div key={i} style={{
                     display:"flex", justifyContent:"space-between", alignItems:"center",
                     padding:"6px 10px", background:"#0d1420", borderRadius:6,
-                    borderLeft:`3px solid ${f.impact==="high"?"#00e5a0":f.impact==="medium"?"#f0c040":"#2a3a50"}`,
+                    borderLeft:`3px solid ${f.impact==="high"?"#00e5a0":f.impact==="medium"?"#f0c040":"#7a9ab8"}`,
                   }}>
                     <span style={{ fontFamily:"'Space Mono',monospace", fontSize:9, color: f.impact==="high"?"#00e5a0":f.impact==="medium"?"#f0c040":"#4a6070", flex:1 }}>{f.text}</span>
-                    <span style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#3d4f6b", marginLeft:8, flexShrink:0 }}>{f.detail}</span>
+                    <span style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#6a8aaa", marginLeft:8, flexShrink:0 }}>{f.detail}</span>
                   </div>
                 ))}
               </div>
@@ -438,14 +461,14 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
               <div style={{ fontFamily:"'Space Mono',monospace", fontSize:9, color:"#00e5a0", fontWeight:700, textAlign:"left" }}>{selected.homeShort}</div>
               <div style={{ fontFamily:"'Space Mono',monospace", fontSize:9, color:"#f0c040", fontWeight:700, textAlign:"right", gridColumn:"2" }}>{selected.awayShort}</div>
             </div>
-            <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#2a3a50", letterSpacing:1.2, marginBottom:6 }}>DIRETOS</div>
+            <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#7a9ab8", letterSpacing:1.2, marginBottom:6 }}>DIRETOS</div>
             <StatRow label="Escanteios ★" h={selected.corners?.home} a={selected.corners?.away} accent/>
             <StatRow label="Cruzamentos ★" h={selected.crosses?.home} a={selected.crosses?.away} accent/>
             {selected.shotsInsideBox && (
               <StatRow label="Chutes Inside Box ★" h={selected.shotsInsideBox?.home} a={selected.shotsInsideBox?.away} accent/>
             )}
             <StatRow label="Chutes Bloq." h={selected.blockedShots?.home} a={selected.blockedShots?.away}/>
-            <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#2a3a50", letterSpacing:1.2, margin:"8px 0 6px" }}>PRESSÃO</div>
+            <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#7a9ab8", letterSpacing:1.2, margin:"8px 0 6px" }}>PRESSÃO</div>
             <StatRow label="Defesas" h={selected.saves?.home} a={selected.saves?.away}/>
             <StatRow label="No Alvo" h={selected.onTarget?.home} a={selected.onTarget?.away}/>
             <StatRow label="Chutes" h={selected.shots?.home} a={selected.shots?.away}/>
@@ -453,7 +476,7 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
               <StatRow label="Ataques Perig. ★" h={selected.dangerousAttacks?.home} a={selected.dangerousAttacks?.away} accent/>
             )}
             <StatRow label="Posse %" h={selected.possession?.home?.toFixed(0)} a={selected.possession?.away?.toFixed(0)}/>
-            <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#2a3a50", letterSpacing:1.2, margin:"8px 0 6px" }}>CONTEXTO</div>
+            <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#7a9ab8", letterSpacing:1.2, margin:"8px 0 6px" }}>CONTEXTO</div>
             <StatRow label="Faltas" h={selected.fouls?.home} a={selected.fouls?.away}/>
             <StatRow label="Amarelos" h={selected.yellowCards?.home} a={selected.yellowCards?.away}/>
             <StatRow label="Impedimentos" h={selected.offsides?.home} a={selected.offsides?.away}/>
@@ -461,22 +484,22 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
             {/* Dados históricos REAIS (API-Football) */}
             {(selected.historical?.homeAvgRaw || selected.historical?.awayAvgRaw || selected.historical?.h2hEstCorners) && (
               <>
-                <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#2a3a50", letterSpacing:1.2, margin:"8px 0 6px" }}>
+                <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#7a9ab8", letterSpacing:1.2, margin:"8px 0 6px" }}>
                   HISTÓRICO REAL · API-FOOTBALL
                 </div>
                 {/* Cards de média */}
                 <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:6, marginBottom:6 }}>
                   {selected.historical.homeAvgRaw && (
                     <div style={{ background:"#0d1420", borderRadius:6, padding:"8px 10px", border:"1px solid #1a2535" }}>
-                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50", marginBottom:2 }}>
+                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#7a9ab8", marginBottom:2 }}>
                         {selected.homeShort} · últimos {selected.historical.homeGames} jogos
                       </div>
                       <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:20, color:"#00e5a0", lineHeight:1 }}>
                         {selected.historical.homeAvgRaw.toFixed(1)}
-                        <span style={{ fontFamily:"'Space Mono',monospace", fontWeight:400, fontSize:9, color:"#3d4f6b", marginLeft:4 }}>esc/jogo</span>
+                        <span style={{ fontFamily:"'Space Mono',monospace", fontWeight:400, fontSize:9, color:"#6a8aaa", marginLeft:4 }}>esc/jogo</span>
                       </div>
                       {selected.historical.homeMin !== null && (
-                        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b", marginTop:2 }}>
+                        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#6a8aaa", marginTop:2 }}>
                           min {selected.historical.homeMin} · max {selected.historical.homeMax}
                           {selected.historical.homeVariance < 2 && <span style={{ color:"#00e5a088", marginLeft:4 }}>↑ previsível</span>}
                         </div>
@@ -485,15 +508,15 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                   )}
                   {selected.historical.awayAvgRaw && (
                     <div style={{ background:"#0d1420", borderRadius:6, padding:"8px 10px", border:"1px solid #1a2535" }}>
-                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50", marginBottom:2 }}>
+                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#7a9ab8", marginBottom:2 }}>
                         {selected.awayShort} · últimos {selected.historical.awayGames} jogos
                       </div>
                       <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:20, color:"#f0c040", lineHeight:1 }}>
                         {selected.historical.awayAvgRaw.toFixed(1)}
-                        <span style={{ fontFamily:"'Space Mono',monospace", fontWeight:400, fontSize:9, color:"#3d4f6b", marginLeft:4 }}>esc/jogo</span>
+                        <span style={{ fontFamily:"'Space Mono',monospace", fontWeight:400, fontSize:9, color:"#6a8aaa", marginLeft:4 }}>esc/jogo</span>
                       </div>
                       {selected.historical.awayMin !== null && (
-                        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b", marginTop:2 }}>
+                        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#6a8aaa", marginTop:2 }}>
                           min {selected.historical.awayMin} · max {selected.historical.awayMax}
                           {selected.historical.awayVariance < 2 && <span style={{ color:"#f0c04088", marginLeft:4 }}>↑ previsível</span>}
                         </div>
@@ -505,7 +528,7 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                 <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:6 }}>
                   {selected.historical.homeAvgRaw && selected.historical.awayAvgRaw && (
                     <div style={{ background:"#0d1420", borderRadius:6, padding:"6px 8px", border:"1px solid #1a2535", textAlign:"center" }}>
-                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50", marginBottom:2 }}>ESPERADO/JOGO</div>
+                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#7a9ab8", marginBottom:2 }}>ESPERADO/JOGO</div>
                       <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:14, color:"#c9d6e3" }}>
                         ~{(selected.historical.homeAvgRaw * 1.10 + selected.historical.awayAvgRaw * 0.92).toFixed(1)}
                       </div>
@@ -513,7 +536,7 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                   )}
                   {selected.historical.h2hEstCorners && (
                     <div style={{ background:"#0d1420", borderRadius:6, padding:"6px 8px", border:"1px solid #1a2535", textAlign:"center" }}>
-                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50", marginBottom:2 }}>H2H ({selected.historical.h2hGames}j)</div>
+                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#7a9ab8", marginBottom:2 }}>H2H ({selected.historical.h2hGames}j)</div>
                       <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:14, color:"#c9d6e3" }}>
                         ~{selected.historical.h2hEstCorners}
                       </div>
@@ -521,8 +544,8 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                   )}
                   {pred.leagueAvgUsed && (
                     <div style={{ background:"#0d1420", borderRadius:6, padding:"6px 8px", border:"1px solid #1a2535", textAlign:"center" }}>
-                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50", marginBottom:2 }}>BASE/10MIN</div>
-                      <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:14, color: pred.hasHistoricalData ? "#00e5a0" : "#3d4f6b" }}>
+                      <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#7a9ab8", marginBottom:2 }}>BASE/10MIN</div>
+                      <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:14, color: pred.hasHistoricalData ? "#00e5a0" : "#6a8aaa" }}>
                         {(pred.leagueAvgUsed * 10).toFixed(2)}
                         {pred.hasHistoricalData && <span style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#00e5a066", marginLeft:2 }}>★</span>}
                       </div>
@@ -535,7 +558,7 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
             {/* Formações e substituições */}
             {(selected.formations || (selected.substitutions?.length > 0)) && (
               <>
-                <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#2a3a50", letterSpacing:1.2, margin:"8px 0 6px" }}>
+                <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#7a9ab8", letterSpacing:1.2, margin:"8px 0 6px" }}>
                   TÁTICA
                 </div>
                 {selected.formations && (
@@ -545,11 +568,11 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                       { side: "Fora", form: selected.formations.away, score: selected.formations.awayAttackScore },
                     ].map((f,i) => (
                       <div key={i} style={{ flex:1, background:"#0d1420", borderRadius:6, padding:"6px 8px", border:"1px solid #1a2535", textAlign:"center" }}>
-                        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50" }}>{f.side}</div>
+                        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#7a9ab8" }}>{f.side}</div>
                         <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:16, color: f.score>=2?"#00e5a0":f.score>0?"#f0c040":"#c9d6e3" }}>
                           {f.form || "—"}
                         </div>
-                        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color: f.score>=2?"#00e5a0":f.score>0?"#f0c040":"#3d4f6b" }}>
+                        <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color: f.score>=2?"#00e5a0":f.score>0?"#f0c040":"#6a8aaa" }}>
                           {f.score>=2?"ofensivo":f.score>0?"equilibrado":"defensivo"}
                         </div>
                       </div>
@@ -559,11 +582,11 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                 {selected.substitutions?.length > 0 && (
                   <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
                     {selected.substitutions.slice(0, 5).map((s,i) => (
-                      <div key={i} style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#3d4f6b", display:"flex", gap:6, alignItems:"center" }}>
-                        <span style={{ color:"#2a3a50" }}>{s.minute}'</span>
+                      <div key={i} style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#6a8aaa", display:"flex", gap:6, alignItems:"center" }}>
+                        <span style={{ color:"#7a9ab8" }}>{s.minute}'</span>
                         <span style={{ color:"#00e5a0" }}>↑{s.playerIn}</span>
-                        <span style={{ color:"#2a3a50" }}>↓{s.playerOut}</span>
-                        <span style={{ color:"#2a3a50", fontSize:7 }}>{s.teamName?.split(" ").slice(0,2).join(" ")}</span>
+                        <span style={{ color:"#7a9ab8" }}>↓{s.playerOut}</span>
+                        <span style={{ color:"#7a9ab8", fontSize:7 }}>{s.teamName?.split(" ").slice(0,2).join(" ")}</span>
                       </div>
                     ))}
                   </div>
@@ -580,7 +603,7 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
                 { l:"PROJ 10MIN", v:`~${pred.projected10}`, c: pred.projected10>=1.5?"#00e5a0":"#f0c040" },
               ].map((s,i) => (
                 <div key={i} style={{ background:"#0d1420", borderRadius:7, padding:"8px 8px", border:"1px solid #1a2535", textAlign:"center" }}>
-                  <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50", letterSpacing:.8, marginBottom:3 }}>{s.l}</div>
+                  <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#7a9ab8", letterSpacing:.8, marginBottom:3 }}>{s.l}</div>
                   <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:16, color:s.c }}>{s.v}</div>
                 </div>
               ))}
@@ -591,14 +614,14 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
           <Section title="Mercados sugeridos" defaultOpen={false}>
             <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:8 }}>
               <div style={{ background:"#0d1420", border:`1px solid ${isStrong ? "#00e5a033" : "#1a2535"}`, borderRadius:8, padding:"10px 12px" }}>
-                <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b", marginBottom:3 }}>PRÓXIMOS 10MIN</div>
+                <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#6a8aaa", marginBottom:3 }}>PRÓXIMOS 10MIN</div>
                 <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:14, color: isStrong ? "#00e5a0" : "#c9d6e3" }}>{pred.market.betRange}</div>
-                <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#3d4f6b", marginTop:2 }}>~{pred.projected10} esc</div>
+                <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#6a8aaa", marginTop:2 }}>~{pred.projected10} esc</div>
               </div>
               <div style={{ background:"#0d1420", border:"1px solid #1a2535", borderRadius:8, padding:"10px 12px" }}>
-                <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b", marginBottom:3 }}>TOTAL DO JOGO</div>
+                <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#6a8aaa", marginBottom:3 }}>TOTAL DO JOGO</div>
                 <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:14, color:"#f0c040" }}>{pred.market.gameRange}</div>
-                <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#3d4f6b", marginTop:2 }}>proj: {pred.market.projGame}</div>
+                <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#6a8aaa", marginTop:2 }}>proj: {pred.market.projGame}</div>
               </div>
             </div>
           </Section>
@@ -608,17 +631,17 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
             <div style={{ background: fw.gameIsSettled ? "#100608" : "#060d0c", border:`2px solid ${fw.verdictColor}55`, borderRadius:10, padding:14, marginBottom:10 }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12 }}>
                 <div>
-                  <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b", letterSpacing:1.5 }}>ANÁLISE 80-FIM · MERCADO DISPONÍVEL</div>
+                  <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#6a8aaa", letterSpacing:1.5 }}>ANÁLISE 80-FIM · MERCADO DISPONÍVEL</div>
                   <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:20, color:fw.verdictColor, marginTop:2 }}>
                     {fw.verdictIcon} OVER 1.5 CORNERS
                   </div>
                   <div style={{ fontFamily:"'Space Mono',monospace", fontSize:9, color:fw.verdictColor, marginTop:2 }}>{fw.verdict}</div>
-                  <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#3d4f6b", marginTop:1 }}>{fw.verdictDetail}</div>
+                  <div style={{ fontFamily:"'Space Mono',monospace", fontSize:8, color:"#6a8aaa", marginTop:1 }}>{fw.verdictDetail}</div>
                 </div>
                 <div style={{ textAlign:"right", flexShrink:0, marginLeft:12 }}>
-                  <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b" }}>TEMPO EFETIVO</div>
+                  <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#6a8aaa" }}>TEMPO EFETIVO</div>
                   <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:24, color:"#f0c040", lineHeight:1 }}>~{fw.effectiveMins}min</div>
-                  <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b" }}>+{fw.estimatedStoppage}min acrés.</div>
+                  <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#6a8aaa" }}>+{fw.estimatedStoppage}min acrés.</div>
                 </div>
               </div>
 
@@ -626,20 +649,20 @@ function DetailPanel({ selected, prediction: pred, isMobile, onBack }) {
               <div style={{ background:"#0a0f18", borderRadius:8, padding:"12px 12px", marginBottom:10, border:`1px solid ${fw.verdictColor}33` }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
                   <div>
-                    <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b", marginBottom:2 }}>P(OVER 1.5 CORNERS)</div>
+                    <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#6a8aaa", marginBottom:2 }}>P(OVER 1.5 CORNERS)</div>
                     <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:900, fontSize:40, color:fw.verdictColor, lineHeight:1 }}>{fw.probOver15}%</div>
                   </div>
                   <div style={{ textAlign:"right" }}>
-                    <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b", marginBottom:2 }}>PROJ CORNERS</div>
+                    <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#6a8aaa", marginBottom:2 }}>PROJ CORNERS</div>
                     <div style={{ fontFamily:"'Barlow Condensed',sans-serif", fontWeight:700, fontSize:26, color:"#c9d6e3" }}>~{fw.projCorners}</div>
-                    <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#3d4f6b" }}>λ={fw.lambda}</div>
+                    <div style={{ fontFamily:"'Space Mono',monospace", fontSize:7, color:"#6a8aaa" }}>λ={fw.lambda}</div>
                   </div>
                 </div>
                 <div style={{ height:6, background:"#0f1825", borderRadius:3, overflow:"hidden", position:"relative" }}>
-                  <div style={{ position:"absolute", left:"70%", top:0, bottom:0, width:2, background:"#2a3a50", zIndex:2 }}/>
+                  <div style={{ position:"absolute", left:"70%", top:0, bottom:0, width:2, background:"#7a9ab8", zIndex:2 }}/>
                   <div style={{ width:`${fw.probOver15}%`, height:"100%", background:`linear-gradient(90deg, #1a4060, ${fw.verdictColor})`, transition:"width 1.2s", borderRadius:3 }}/>
                 </div>
-                <div style={{ display:"flex", justifyContent:"space-between", fontFamily:"'Space Mono',monospace", fontSize:7, color:"#2a3a50", marginTop:2 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", fontFamily:"'Space Mono',monospace", fontSize:7, color:"#7a9ab8", marginTop:2 }}>
                   <span>0%</span><span>70% mínimo viável</span><span>100%</span>
                 </div>
               </div>
@@ -674,12 +697,12 @@ function isHot(pred) {
 // ── StatsPanel: Dashboard de performance do Supabase ─────────────────────────
 function StatsPanel({ data, loading }) {
   if (loading) return (
-    <div style={{ textAlign:"center", padding:40, fontFamily:"var(--mono)", fontSize:10, color:"#2a3a50" }}>
+    <div style={{ textAlign:"center", padding:40, fontFamily:"var(--mono)", fontSize:10, color:"#7a9ab8" }}>
       Carregando estatísticas...
     </div>
   );
   if (!data) return (
-    <div style={{ textAlign:"center", padding:40, fontFamily:"var(--mono)", fontSize:10, color:"#2a3a50" }}>
+    <div style={{ textAlign:"center", padding:40, fontFamily:"var(--mono)", fontSize:10, color:"#7a9ab8" }}>
       Supabase não configurado ou sem dados ainda.
     </div>
   );
@@ -695,20 +718,20 @@ function StatsPanel({ data, loading }) {
 
       {/* Por faixa de confiança */}
       <div style={{ background:"#060a14", borderRadius:10, padding:14, border:"1px solid #141e2e" }}>
-        <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#2a3a50", marginBottom:10, letterSpacing:1.5 }}>
+        <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#7a9ab8", marginBottom:10, letterSpacing:1.5 }}>
           POR FAIXA DE CONFIANÇA
         </div>
         {summary.length === 0 && (
-          <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#2a3a50" }}>Sem dados ainda</div>
+          <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#7a9ab8" }}>Sem dados ainda</div>
         )}
         {summary.map((row, i) => (
           <div key={i} style={{
             display:"flex", justifyContent:"space-between", alignItems:"center",
             padding:"6px 0", borderBottom:"1px solid #0d1420",
           }}>
-            <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b" }}>{row.confidence_range}</div>
+            <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#6a8aaa" }}>{row.confidence_range}</div>
             <div style={{ display:"flex", gap:16, alignItems:"center" }}>
-              <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#2a3a50" }}>{row.total} jogos</span>
+              <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#7a9ab8" }}>{row.total} jogos</span>
               <span style={{
                 fontFamily:"var(--display)", fontWeight:700, fontSize:13,
                 color: row.win_rate_pct >= 65 ? "#00e5a0" : row.win_rate_pct >= 50 ? "#f0c040" : "#ff4560",
@@ -723,7 +746,7 @@ function StatsPanel({ data, loading }) {
       {/* Por liga */}
       {byLeague.length > 0 && (
         <div style={{ background:"#060a14", borderRadius:10, padding:14, border:"1px solid #141e2e" }}>
-          <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#2a3a50", marginBottom:10, letterSpacing:1.5 }}>
+          <div style={{ fontFamily:"var(--mono)", fontSize:8, color:"#7a9ab8", marginBottom:10, letterSpacing:1.5 }}>
             TOP LIGAS
           </div>
           {byLeague.slice(0, 8).map((row, i) => (
@@ -731,11 +754,11 @@ function StatsPanel({ data, loading }) {
               display:"flex", justifyContent:"space-between", alignItems:"center",
               padding:"5px 0", borderBottom:"1px solid #0d1420",
             }}>
-              <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#3d4f6b", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+              <div style={{ fontFamily:"var(--mono)", fontSize:9, color:"#6a8aaa", flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                 {row.league_name}
               </div>
               <div style={{ display:"flex", gap:12, alignItems:"center", flexShrink:0 }}>
-                <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#2a3a50" }}>{row.total}</span>
+                <span style={{ fontFamily:"var(--mono)", fontSize:8, color:"#7a9ab8" }}>{row.total}</span>
                 <span style={{
                   fontFamily:"var(--display)", fontWeight:700, fontSize:12,
                   color: row.win_rate_pct >= 65 ? "#00e5a0" : row.win_rate_pct >= 50 ? "#f0c040" : "#ff4560",
@@ -912,7 +935,7 @@ export default function Home() {
             <div style={{ width:26, height:26, background:"#00e5a0", borderRadius:5, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13 }}>⚽</div>
             <div>
               <div style={{ fontFamily:"var(--display)", fontWeight:900, fontSize:16, letterSpacing:2 }}>CORNER<span style={{ color:"#00e5a0" }}>EDGE</span></div>
-              {!isMobile && <div style={{ fontFamily:"var(--mono)", fontSize:7, color:"#2a3a50", letterSpacing:1.5 }}>AF · 1200+ LIGAS</div>}
+              {!isMobile && <div style={{ fontFamily:"var(--mono)", fontSize:7, color:"#7a9ab8", letterSpacing:1.5 }}>AF · 1200+ LIGAS</div>}
             </div>
           </div>
 
@@ -926,7 +949,7 @@ export default function Home() {
                 { l:"✓", v: warmCount, c:"#00e5a0" },
               ].map((s,i) => (
                 <div key={i} style={{ textAlign:"center" }}>
-                  <div style={{ fontFamily:"var(--mono)", fontSize:7, color:"#2a3a50" }}>{s.l}</div>
+                  <div style={{ fontFamily:"var(--mono)", fontSize:7, color:"#7a9ab8" }}>{s.l}</div>
                   <div style={{ fontFamily:"var(--display)", fontWeight:700, fontSize:18, color:s.c, lineHeight:1 }}>{s.v}</div>
                 </div>
               ))}
@@ -965,17 +988,17 @@ export default function Home() {
                       flex:1, padding:"8px 4px", fontFamily:"var(--mono)", fontSize:9,
                       cursor:"pointer", border:"none",
                       background: tab===t.k ? "#00e5a0" : "#0d1420",
-                      color: tab===t.k ? "#040810" : "#3d4f6b",
+                      color: tab===t.k ? "#040810" : "#6a8aaa",
                       fontWeight: tab===t.k ? "700" : "400",
                     }}>{t.l}</button>
                   ))}
                 </div>
-                <div style={{ fontFamily:"var(--mono)", fontSize:7, color:"#2a3a50", letterSpacing:1.5, marginBottom:8, display:"flex", justifyContent:"space-between" }}>
+                <div style={{ fontFamily:"var(--mono)", fontSize:7, color:"#7a9ab8", letterSpacing:1.5, marginBottom:8, display:"flex", justifyContent:"space-between" }}>
                   <span>{tab==="live" ? "EM ANDAMENTO" : "PRÓXIMOS"}</span>
                   {lastUpdate && <span>{lastUpdate.toLocaleTimeString("pt-BR")}</span>}
                 </div>
                 {tab==="live" && games.length===0 && (
-                  <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#3d4f6b", textAlign:"center", padding:20, background:"#0d1420", borderRadius:8 }}>
+                  <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#6a8aaa", textAlign:"center", padding:20, background:"#0d1420", borderRadius:8 }}>
                     Nenhum jogo ao vivo.
                   </div>
                 )}
@@ -1007,17 +1030,17 @@ export default function Home() {
                     flex:1, padding:"7px 4px", fontFamily:"var(--mono)", fontSize:8.5,
                     cursor:"pointer", border:"none",
                     background: tab===t.k ? "#00e5a0" : "#0d1420",
-                    color: tab===t.k ? "#040810" : "#3d4f6b",
+                    color: tab===t.k ? "#040810" : "#6a8aaa",
                     fontWeight: tab===t.k ? "700" : "400", transition:"all .15s",
                   }}>{t.l}</button>
                 ))}
               </div>
-              <div style={{ fontFamily:"var(--mono)", fontSize:7.5, color:"#2a3a50", letterSpacing:1.5, marginBottom:8, display:"flex", justifyContent:"space-between" }}>
+              <div style={{ fontFamily:"var(--mono)", fontSize:7.5, color:"#7a9ab8", letterSpacing:1.5, marginBottom:8, display:"flex", justifyContent:"space-between" }}>
                 <span>{tab==="live" ? "EM ANDAMENTO" : "PRÓXIMOS"}</span>
                 {lastUpdate && <span>{lastUpdate.toLocaleTimeString("pt-BR")}</span>}
               </div>
               {tab==="live" && games.length===0 && (
-                <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#3d4f6b", textAlign:"center", padding:20, background:"#0d1420", borderRadius:8, border:"1px solid #141e2e" }}>
+                <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#6a8aaa", textAlign:"center", padding:20, background:"#0d1420", borderRadius:8, border:"1px solid #141e2e" }}>
                   Nenhum jogo ao vivo.
                 </div>
               )}
@@ -1035,7 +1058,7 @@ export default function Home() {
               ) : (
                 <div style={{ display:"flex", alignItems:"center", justifyContent:"center", height:"60vh", flexDirection:"column", gap:12 }}>
                   <div style={{ fontSize:32 }}>⚽</div>
-                  <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#2a3a50" }}>Selecione um jogo para ver a análise</div>
+                  <div style={{ fontFamily:"var(--mono)", fontSize:10, color:"#7a9ab8" }}>Selecione um jogo para ver a análise</div>
                 </div>
               )}
             </div>
@@ -1059,14 +1082,14 @@ export default function Home() {
           }}>
             <button onClick={() => setMobileView("list")} style={{
               background:"none", border:"none", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3,
-              color: mobileView==="list" ? "#00e5a0" : "#2a3a50",
+              color: mobileView==="list" ? "#00e5a0" : "#7a9ab8",
             }}>
               <span style={{ fontSize:16 }}>☰</span>
               <span style={{ fontFamily:"var(--mono)", fontSize:7 }}>JOGOS</span>
             </button>
             <button onClick={() => selected && setMobileView("detail")} style={{
               background:"none", border:"none", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3,
-              color: mobileView==="detail" ? "#00e5a0" : selected ? "#3d4f6b" : "#1a2535",
+              color: mobileView==="detail" ? "#00e5a0" : selected ? "#6a8aaa" : "#1a2535",
               opacity: selected ? 1 : 0.4,
             }}>
               <span style={{ fontSize:16 }}>📊</span>
@@ -1074,7 +1097,7 @@ export default function Home() {
             </button>
             <button onClick={() => { setMobileView("stats"); fetchStats(); }} style={{
               background:"none", border:"none", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3,
-              color: mobileView==="stats" ? "#f0c040" : "#2a3a50",
+              color: mobileView==="stats" ? "#f0c040" : "#7a9ab8",
             }}>
               <span style={{ fontSize:16 }}>🏆</span>
               <span style={{ fontFamily:"var(--mono)", fontSize:7 }}>STATS</span>

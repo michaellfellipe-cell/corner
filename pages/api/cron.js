@@ -1,16 +1,15 @@
 /**
- * pages/api/cron.js — Executado pelo GitHub Actions a cada 5 minutos
+ * pages/api/cron.js — v38 corrigido
+ * Timeout fix: operações divididas, sem busca extra de stats na AF
  *
- * Responsabilidades:
- *   1. Busca jogos ao vivo da AF + stats → salva snapshots no Supabase
- *   2. Detecta jogos encerrados hoje (FT)
- *   3. Para cada encerrado: busca snapshots salvos → verifica predições pendentes
- *      → atualiza result = 'win' | 'loss' automaticamente
- *
- * Autenticação: header Authorization: Bearer CRON_SECRET
+ * O cron NÃO busca stats separadas da AF — isso seria quota dupla.
+ * Os snapshots com dados reais já são salvos pelo games.js quando o app está aberto.
+ * O cron faz apenas:
+ *   1. Detecta jogos FT do dia
+ *   2. Para os que têm predições pendentes → busca snapshots do Supabase → verifica
  */
 
-import { logSnapshot, verifyPredictionsForFixture, supabaseQuery } from "../../lib/supabase.js";
+import { verifyPredictionsForFixture, supabaseQuery, supabaseInsert } from "../../lib/supabase.js";
 
 const AF_KEY      = process.env.APIFOOTBALL_KEY;
 const CRON_SECRET = process.env.CRON_SECRET;
@@ -25,72 +24,31 @@ const MAIN_LEAGUES = new Set([
   1,5,6,8,9,10,15,
 ]);
 
-// ── AF helpers ──────────────────────────────────────────────────────────────
-async function afGet(path) {
-  if (!AF_KEY) return null;
-  try {
-    const res = await fetch(`https://v3.football.api-sports.io${path}`, {
-      headers: { "x-apisports-key": AF_KEY },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (data.errors && Object.keys(data.errors).length) return null;
-    return data.response || null;
-  } catch { return null; }
-}
-
-// Extrai stat do array de statistics da AF
-function getStat(statsArr, teamIdx, type) {
-  const v = statsArr?.[teamIdx]?.statistics?.find(s => s.type === type)?.value;
-  if (v === null || v === undefined) return 0;
-  return parseInt(v) || 0;
-}
-
-// ── Busca jogos ao vivo com stats ───────────────────────────────────────────
-async function fetchLiveWithStats() {
-  const fixtures = await afGet("/fixtures?live=all");
-  if (!fixtures?.length) return [];
-
-  const active = fixtures.filter(f =>
-    MAIN_LEAGUES.has(f.league?.id) &&
-    ["1H","2H","ET","HT"].includes(f.fixture?.status?.short)
-  );
-  if (!active.length) return [];
-
-  // Busca stats em lotes de 5 para não explodir quota
-  const results = [];
-  for (let i = 0; i < active.length; i += 5) {
-    const batch = active.slice(i, i + 5);
-    const statsArr = await Promise.all(
-      batch.map(f =>
-        afGet(`/fixtures/statistics?fixture=${f.fixture?.id}`).catch(() => null)
-      )
-    );
-    batch.forEach((f, idx) => {
-      results.push({ fixture: f, stats: statsArr[idx] });
-    });
-  }
-  return results;
-}
-
-// ── Busca todos os jogos FT de hoje ────────────────────────────────────────
+// Busca jogos FT de hoje na AF (leve — só status, sem stats)
 async function fetchTodayFinished() {
-  const today = new Date().toISOString().slice(0, 10);
-  const fixtures = await afGet(`/fixtures?date=${today}&status=FT`);
-  if (!fixtures?.length) return [];
-  // Filtra apenas MAIN_LEAGUES
-  return fixtures.filter(f => MAIN_LEAGUES.has(f.league?.id));
+  if (!AF_KEY) return [];
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const res = await fetch(
+      `https://v3.football.api-sports.io/fixtures?date=${today}&status=FT`,
+      {
+        headers: { "x-apisports-key": AF_KEY },
+        signal: AbortSignal.timeout(8000),
+      }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data.response || []).filter(f => MAIN_LEAGUES.has(f.league?.id));
+  } catch { return []; }
 }
 
-// ── Busca snapshots de um fixture do Supabase ───────────────────────────────
-async function getSnapshotsForFixture(fixtureId) {
+// Busca snapshots de um fixture do Supabase
+async function getSnapshots(fixtureId) {
   return supabaseQuery(
     `snapshots?fixture_id=eq.${fixtureId}&order=minute.asc&select=minute,corners`
   );
 }
 
-// ── Handler principal ────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   // Autenticação
   const auth = req.headers["authorization"] || "";
@@ -102,65 +60,43 @@ export default async function handler(req, res) {
     return res.status(200).json({ skipped: true, reason: "Supabase não configurado" });
   }
 
-  const startTime = Date.now();
-  const report = { snapshots: 0, verified: 0, finished: 0, errors: [] };
+  const start  = Date.now();
+  const report = { verified: 0, finished: 0, skipped: 0, errors: [] };
 
   try {
-    // ── PARTE 1: Salva snapshots dos jogos ao vivo ──────────────────────────
-    const liveWithStats = await fetchLiveWithStats();
-
-    for (const { fixture: f, stats } of liveWithStats) {
-      try {
-        const corners = getStat(stats, 0, "Corner Kicks") + getStat(stats, 1, "Corner Kicks");
-        const crosses = getStat(stats, 0, "Total Crosses") + getStat(stats, 1, "Total Crosses");
-        const blocked = getStat(stats, 0, "Blocked Shots") + getStat(stats, 1, "Blocked Shots");
-        const shots   = getStat(stats, 0, "Total Shots")   + getStat(stats, 1, "Total Shots");
-
-        // Só salva se tiver pelo menos algum dado real (evita snapshots zeros inúteis)
-        if (corners > 0 || shots > 0) {
-          await logSnapshot({
-            afFixtureId:     f.fixture?.id,
-            hasStats:        true,
-            minute:          f.fixture?.status?.elapsed || 0,
-            corners:         { home: getStat(stats, 0, "Corner Kicks"),  away: getStat(stats, 1, "Corner Kicks")  },
-            crosses:         { home: getStat(stats, 0, "Total Crosses"), away: getStat(stats, 1, "Total Crosses") },
-            blockedShots:    { home: getStat(stats, 0, "Blocked Shots"), away: getStat(stats, 1, "Blocked Shots") },
-            shots:           { home: getStat(stats, 0, "Total Shots"),   away: getStat(stats, 1, "Total Shots")   },
-            dangerousAttacks:{ home: getStat(stats, 0, "Dangerous Attacks"), away: getStat(stats, 1, "Dangerous Attacks") },
-            score:           { home: f.goals?.home || 0, away: f.goals?.away || 0 },
-          });
-          report.snapshots++;
-        }
-      } catch (e) {
-        report.errors.push(`snap ${f.fixture?.id}: ${e.message}`);
-      }
-    }
-
-    // ── PARTE 2: Verifica predições de jogos encerrados ─────────────────────
-    const finishedFixtures = await fetchTodayFinished();
-
-    // Busca fixture_ids que têm predições pendentes no Supabase
-    const pendingIds = await supabaseQuery(
+    // 1. Busca fixture_ids com predições pendentes no Supabase
+    const pending = await supabaseQuery(
       `predictions?verified=eq.false&min_corners_needed=not.is.null&select=fixture_id`
     );
-    const pendingSet = new Set((pendingIds || []).map(p => String(p.fixture_id)));
+    if (!pending?.length) {
+      return res.status(200).json({ ok: true, ...report, msg: "Sem predições pendentes" });
+    }
 
-    for (const f of finishedFixtures) {
-      const fixtureId = String(f.fixture?.id);
-      if (!pendingSet.has(fixtureId)) continue; // sem predições pendentes, pula
+    const pendingIds = [...new Set(pending.map(p => String(p.fixture_id)))];
+
+    // 2. Busca jogos FT de hoje
+    const finished = await fetchTodayFinished();
+    const finishedIds = new Set(finished.map(f => String(f.fixture?.id)));
+
+    // 3. Verifica apenas fixtures que: têm predições pendentes E encerraram hoje
+    for (const fixtureId of pendingIds) {
+      if (!finishedIds.has(fixtureId)) {
+        report.skipped++;
+        continue; // jogo ainda em andamento ou de outro dia
+      }
 
       try {
-        const snapshots = await getSnapshotsForFixture(fixtureId);
-
-        if (snapshots.length < 2) continue; // dados insuficientes para verificar
+        const snapshots = await getSnapshots(fixtureId);
+        if (snapshots.length < 2) {
+          report.skipped++;
+          continue; // poucos snapshots para verificar
+        }
 
         const count = await verifyPredictionsForFixture(fixtureId, snapshots);
-        if (count > 0) {
-          report.verified += count;
-          report.finished++;
-        }
+        report.verified += count;
+        report.finished++;
       } catch (e) {
-        report.errors.push(`verify ${fixtureId}: ${e.message}`);
+        report.errors.push(`${fixtureId}: ${e.message}`);
       }
     }
 
@@ -168,6 +104,6 @@ export default async function handler(req, res) {
     report.errors.push(`global: ${e.message}`);
   }
 
-  report.duration_ms = Date.now() - startTime;
+  report.duration_ms = Date.now() - start;
   return res.status(200).json({ ok: true, ...report });
 }

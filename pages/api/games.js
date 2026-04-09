@@ -1,5 +1,5 @@
 /**
- * pages/api/games.js — v36 (AF Ultra 75.000/dia)
+ * pages/api/games.js — v40 (indicador qualidade de dados por liga)
  *
  * UPGRADES v36:
  *   - Poll frontend: 60s → 15s
@@ -38,6 +38,55 @@ const cacheGet = (k) => {
   return v.data;
 };
 const cacheSet = (k, data, ttl) => _cache.set(k, { data, exp: Date.now() + ttl });
+
+// ── Qualidade de dados por liga ───────────────────────────────────────────
+// "realtime": Opta/Stats Perform — atualização a cada 30-60s
+// "slow":     operadores manuais ou provedores lentos — pode congelar 5-15min
+// "normal":   atualização a cada 1-3min (padrão)
+const LEAGUE_DATA_QUALITY = {
+  // Tempo real (Opta)
+  39:  "realtime", 40:  "realtime", 41:  "realtime", 45:  "realtime", 48: "realtime",
+  140: "realtime", 141: "realtime",
+  135: "realtime", 136: "realtime",
+  78:  "realtime", 79:  "realtime",
+  61:  "realtime", 62:  "realtime",
+  88:  "realtime", 89:  "realtime",
+  94:  "realtime", 95:  "realtime",
+  144: "realtime",
+  2:   "realtime", 3:   "realtime", 4: "realtime", 531: "realtime", 848: "realtime",
+  // Normal
+  71:  "normal", 72: "normal", 73: "normal",
+  128: "normal", 131: "normal",
+  253: "normal", 256: "normal",
+  106: "normal", 107: "normal",
+  113: "normal", 114: "normal",
+  119: "normal", 120: "normal",
+  103: "normal", 104: "normal",
+  179: "normal", 180: "normal",
+  203: "normal", 204: "normal",
+  197: "normal", 198: "normal",
+  345: "normal", 346: "normal",
+  283: "normal", 284: "normal",
+  169: "normal", 170: "normal",
+  167: "normal", 168: "normal",
+  207: "normal", 208: "normal",
+  218: "normal", 219: "normal",
+  98:  "normal", 99: "normal",
+  292: "normal", 293: "normal",
+  11:  "normal", 13:  "normal",
+  // Lentos (manuais ou provedores com atraso)
+  307: "slow", 308: "slow",  // Arábia Saudita
+  233: "slow",               // Egito
+  240: "slow", 239: "slow",  // Colômbia
+  265: "slow", 266: "slow",  // Chile
+  268: "slow", 269: "slow",  // Uruguai
+  382: "slow",               // Israel Liga Leumit
+  235: "slow", 236: "slow",  // Rússia 1ª/2ª
+};
+
+function getLeagueDataQuality(leagueId) {
+  return LEAGUE_DATA_QUALITY[leagueId] || "normal";
+}
 
 // ── Bandeiras ──────────────────────────────────────────────────────────────
 const FLAGS = {
@@ -286,13 +335,18 @@ function normalizeAFGame(fix, stats, lineups, isUpcoming = false) {
       awayAttackScore: formationAttackScore(formations.away?.formation),
     } : null,
 
-    venue:      fix.fixture?.venue?.name || null,
-    hasStats:   !!gameStats,
+    venue:       fix.fixture?.venue?.name || null,
+    hasStats:    !!gameStats,
     // af-loading: jogo iniciado há <4min, stats ainda chegando na AF (normal)
     // af-no-stats: liga não reporta stats (ex: Challenge League)
-    dataSource: gameStats ? "af"
-              : status.minute < 4 ? "af-loading"
-              : "af-no-stats",
+    dataSource:  gameStats ? "af"
+               : status.minute < 4 ? "af-loading"
+               : "af-no-stats",
+    // dataQuality: indica velocidade de atualização dos dados na AF
+    // "realtime" → Opta, atualiza a cada 30-60s (PL, Bundesliga, La Liga...)
+    // "normal"   → 1-3min (maioria das ligas)
+    // "slow"     → 5-15min (Arábia Saudita, algumas ligas menores)
+    dataQuality: getLeagueDataQuality(fix.league?.id),
   };
 }
 
