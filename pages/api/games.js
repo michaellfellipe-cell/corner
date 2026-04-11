@@ -424,7 +424,8 @@ export default async function handler(req, res) {
       return results;
     }
 
-    // Stats: lotes de 10 — 75k/dia permite concorrência maior
+    // Stats: lotes de 15 — 75k/dia permite concorrência maior
+    // Reduz lotes de 4→3 para 59 jogos, economizando ~4s por chamada
     const statsArr = await batchedFetch(liveActive, async f => {
       const id  = f.fixture?.id;
       const ck  = `gm_stats_${id}`;
@@ -439,20 +440,23 @@ export default async function handler(req, res) {
         cacheSet(nk, true, 90_000);
       }
       return { id, stats };
-    }, 10);
+    }, 15);
 
-    // Lineups: lotes de 4 (menos crítico, cache 4h)
-    const lineupsArr = await batchedFetch(liveActive, async f => {
+    // Lineups: apenas do cache — busca em background se faltando
+    // Com 59 jogos, buscar lineups sequencialmente causa timeout (15 lotes × 2s = 30s)
+    // Cache de 4h cobre a maioria dos casos. Jogos sem lineup apenas ficam sem formação.
+    const lineupsArr = liveActive.map(f => {
       const id  = f.fixture?.id;
       const ck  = `af_lineups_${id}`;
       const hit = cacheGet(ck);
       if (hit) return { id, lineups: hit };
-      const lineups = await getLineups(id).catch(() => null);
-      if (lineups) cacheSet(ck, lineups, 14_400_000); // 4h
-      return { id, lineups };
-    }, 4);
+      // Background: busca sem bloquear para popular o cache
+      getLineups(id).then(l => { if (l) cacheSet(ck, l, 14_400_000); }).catch(() => null);
+      return { id, lineups: null };
+    });
 
-    // Histórico: sempre busca para top leagues (75k/dia permite sem lazy loading)
+    // Histórico: cache-first — não bloqueia com requisições ao vivo
+    // Se dados não estão em cache, busca em background para próximo poll
     const historicalArr = await Promise.all(liveActive.map(async f => {
       const id  = f.fixture?.id;
       const hId = f.teams?.home?.id;
@@ -461,14 +465,21 @@ export default async function handler(req, res) {
 
       const hCk = `af_ch_${hId}_5`;
       const aCk = `af_ch_${aId}_5`;
+      const h2hCk = `af_h2h_${hId}_${aId}`;
 
-      // Busca tudo em paralelo — sem lazy loading
-      const [homeHist, awayHist, h2h] = await Promise.all([
-        (async () => { const h=cacheGet(hCk); if(h) return h; const r=await getTeamCornerHistory(hId,5).catch(()=>null); if(r) cacheSet(hCk,r,28_800_000); return r; })(),
-        (async () => { const h=cacheGet(aCk); if(h) return h; const r=await getTeamCornerHistory(aId,5).catch(()=>null); if(r) cacheSet(aCk,r,28_800_000); return r; })(),
-        getH2H(hId, aId).catch(() => null),
-      ]);
+      const homeHist = cacheGet(hCk);
+      const awayHist = cacheGet(aCk);
+      const h2hCached = cacheGet(h2hCk);
 
+      // Background: busca dados que estão faltando sem bloquear
+      if (!homeHist) getTeamCornerHistory(hId,5).then(r => { if(r) cacheSet(hCk,r,28_800_000); }).catch(()=>null);
+      if (!awayHist) getTeamCornerHistory(aId,5).then(r => { if(r) cacheSet(aCk,r,28_800_000); }).catch(()=>null);
+      if (!h2hCached) getH2H(hId,aId).then(r => { if(r) cacheSet(h2hCk,r,28_800_000); }).catch(()=>null);
+
+      // Só usa dados se estiver em cache
+      if (!homeHist && !awayHist) return { id, historical: null };
+
+      const h2h = h2hCached;
       const toCorner = hist => hist ? {
         forHome: +(hist.avg*1.10).toFixed(2), forAway: +(hist.avg*0.94).toFixed(2),
         againstHome:0, againstAway:0, avg:hist.avg, games:hist.games,
